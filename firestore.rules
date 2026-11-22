@@ -1,0 +1,304 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Global safety net: deny everything by default
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // --- Shared Security Helpers ---
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isValidCategory(c) {
+      return c in ['SLANG', 'IDIOM', 'PHRASAL_VERB', 'WORKPLACE'];
+    }
+
+    function isValidCategoryFilter(c) {
+      return c in ['ALL', 'SLANG', 'IDIOM', 'PHRASAL_VERB', 'WORKPLACE'];
+    }
+
+    function isValidRegister(r) {
+      return r in ['CASUAL', 'CONVERSATIONAL', 'PROFESSIONAL', 'FORMAL'];
+    }
+
+    function isValidCefr(level) {
+      return level in ['B2', 'C1', 'C2'];
+    }
+
+    function isValidCadence(c) {
+      return c in ['DAILY', 'WEEKLY'];
+    }
+
+    function isValidGoalMetric(m) {
+      return m in ['LEARN_NEW', 'MASTER_PHRASES', 'COMPLETE_QUIZZES'];
+    }
+
+    function isValidQuizMode(m) {
+      return m in ['SMART_REVIEW', 'GOAL_DRILL', 'CATEGORY_DRILL', 'AI_CUSTOM'];
+    }
+
+    // --- Entity Validation Blueprints ---
+    function isValidUserProfile(data, userId) {
+      return data.userId is string && data.userId == userId &&
+             data.displayName is string && data.displayName.size() >= 1 && data.displayName.size() <= 80 &&
+             data.currentStreak is int && data.currentStreak >= 0 && data.currentStreak <= 10000 &&
+             data.longestStreak is int && data.longestStreak >= 0 && data.longestStreak <= 10000 &&
+             data.lastPracticeDate is string && data.lastPracticeDate.size() <= 20 &&
+             data.totalLessonsCompleted is int && data.totalLessonsCompleted >= 0 && data.totalLessonsCompleted <= 100000 &&
+             data.totalQuizzesCompleted is int && data.totalQuizzesCompleted >= 0 && data.totalQuizzesCompleted <= 100000 &&
+             data.cumulativeCorrectAnswers is int && data.cumulativeCorrectAnswers >= 0 && data.cumulativeCorrectAnswers <= 1000000 &&
+             data.cumulativeQuizQuestions is int && data.cumulativeQuizQuestions >= 0 && data.cumulativeQuizQuestions <= 1000000 &&
+             data.cumulativeCorrectAnswers <= data.cumulativeQuizQuestions &&
+             data.createdAt is timestamp && data.createdAt <= request.time &&
+             data.updatedAt is timestamp && data.updatedAt <= request.time;
+    }
+
+    function isValidLearningGoal(data) {
+      return data.title is string && data.title.size() >= 1 && data.title.size() <= 120 &&
+             data.cadence is string && isValidCadence(data.cadence) &&
+             data.metricType is string && isValidGoalMetric(data.metricType) &&
+             data.categoryFilter is string && isValidCategoryFilter(data.categoryFilter) &&
+             data.targetCount is int && data.targetCount >= 1 && data.targetCount <= 50 &&
+             data.active is bool &&
+             data.createdAt is timestamp && data.createdAt <= request.time &&
+             data.updatedAt is timestamp && data.updatedAt <= request.time;
+    }
+
+    function isValidPhraseProgress(data, phraseId) {
+      return data.phraseId is string && data.phraseId == phraseId && data.phraseId.size() >= 1 && data.phraseId.size() <= 100 &&
+             data.category is string && isValidCategory(data.category) &&
+             data.bookmarked is bool &&
+             data.lessonCompleted is bool &&
+             data.lessonCompletedDay is string && data.lessonCompletedDay.size() <= 20 &&
+             data.lessonCompletedWeek is string && data.lessonCompletedWeek.size() <= 20 &&
+             data.masteryLevel is int && data.masteryLevel >= 0 && data.masteryLevel <= 3 &&
+             data.masteredDay is string && data.masteredDay.size() <= 20 &&
+             data.masteredWeek is string && data.masteredWeek.size() <= 20 &&
+             data.correctCount is int && data.correctCount >= 0 && data.correctCount <= 100000 &&
+             data.attemptCount is int && data.attemptCount >= 0 && data.attemptCount <= 100000 &&
+             data.missCount is int && data.missCount >= 0 && data.missCount <= 100000 &&
+             data.consecutiveCorrect is int && data.consecutiveCorrect >= 0 && data.consecutiveCorrect <= 100000 &&
+             data.missedClozeCount is int && data.missedClozeCount >= 0 && data.missedClozeCount <= 100000 &&
+             data.missedRegisterCount is int && data.missedRegisterCount >= 0 && data.missedRegisterCount <= 100000 &&
+             data.missedMeaningCount is int && data.missedMeaningCount >= 0 && data.missedMeaningCount <= 100000 &&
+             data.lastReviewedDay is string && data.lastReviewedDay.size() <= 20 &&
+             data.createdAt is timestamp && data.createdAt <= request.time &&
+             data.updatedAt is timestamp && data.updatedAt <= request.time;
+    }
+
+    function isValidCustomPhrase(data) {
+      return data.term is string && data.term.size() >= 1 && data.term.size() <= 120 &&
+             data.ipa is string && data.ipa.size() <= 120 &&
+             data.category is string && isValidCategory(data.category) &&
+             data.register is string && isValidRegister(data.register) &&
+             data.cefrLevel is string && isValidCefr(data.cefrLevel) &&
+             data.definition is string && data.definition.size() >= 1 && data.definition.size() <= 800 &&
+             data.nuanceSummary is string && data.nuanceSummary.size() <= 800 &&
+             data.dialogue is list && data.dialogue.size() <= 10 && (data.dialogue.size() == 0 || data.dialogue[0] is map) &&
+             data.etymology is string && data.etymology.size() <= 1600 &&
+             data.synonyms is list && data.synonyms.size() <= 10 && (data.synonyms.size() == 0 || data.synonyms[0] is map) &&
+             data.antonyms is list && data.antonyms.size() <= 10 && (data.antonyms.size() == 0 || data.antonyms[0] is string) &&
+             data.usageNotes is list && data.usageNotes.size() <= 10 && (data.usageNotes.size() == 0 || data.usageNotes[0] is string) &&
+             data.createdAt is timestamp && data.createdAt <= request.time &&
+             data.updatedAt is timestamp && data.updatedAt <= request.time;
+    }
+
+    function isValidQuizSession(data) {
+      return data.mode is string && isValidQuizMode(data.mode) &&
+             data.category is string && isValidCategoryFilter(data.category) &&
+             data.score is int && data.score >= 0 && data.score <= 50 &&
+             data.totalQuestions is int && data.totalQuestions >= 1 && data.totalQuestions <= 50 &&
+             data.score <= data.totalQuestions &&
+             data.missedPhraseIds is list && data.missedPhraseIds.size() <= 50 && (data.missedPhraseIds.size() == 0 || data.missedPhraseIds[0] is string) &&
+             data.missedCloze is int && data.missedCloze >= 0 && data.missedCloze <= 50 &&
+             data.missedRegister is int && data.missedRegister >= 0 && data.missedRegister <= 50 &&
+             data.missedMeaning is int && data.missedMeaning >= 0 && data.missedMeaning <= 50 &&
+             data.periodDay is string && data.periodDay.size() >= 1 && data.periodDay.size() <= 20 &&
+             data.periodWeek is string && data.periodWeek.size() >= 1 && data.periodWeek.size() <= 20 &&
+             data.completedAt is timestamp && data.completedAt <= request.time;
+    }
+
+    // --- Collection Match Rules ---
+    match /users/{userId} {
+      allow get: if isOwner(userId) && isValidId(userId);
+      allow list: if false;
+
+      allow create: if isOwner(userId) &&
+                       isValidId(userId) &&
+                       incoming().keys().hasAll([
+                         'userId', 'displayName', 'currentStreak', 'longestStreak',
+                         'lastPracticeDate', 'totalLessonsCompleted', 'totalQuizzesCompleted',
+                         'cumulativeCorrectAnswers', 'cumulativeQuizQuestions', 'createdAt', 'updatedAt'
+                       ]) &&
+                       incoming().keys().hasOnly([
+                         'userId', 'displayName', 'currentStreak', 'longestStreak',
+                         'lastPracticeDate', 'totalLessonsCompleted', 'totalQuizzesCompleted',
+                         'cumulativeCorrectAnswers', 'cumulativeQuizQuestions', 'createdAt', 'updatedAt'
+                       ]) &&
+                       isValidUserProfile(incoming(), userId);
+
+      allow update: if isSignedIn() &&
+                       isValidUserProfile(incoming(), userId) &&
+                       isOwner(userId) &&
+                       isValidId(userId) &&
+                       incoming().userId == existing().userId &&
+                       incoming().createdAt == existing().createdAt &&
+                       incoming().diff(existing()).affectedKeys().hasOnly([
+                         'displayName', 'currentStreak', 'longestStreak', 'lastPracticeDate',
+                         'totalLessonsCompleted', 'totalQuizzesCompleted',
+                         'cumulativeCorrectAnswers', 'cumulativeQuizQuestions', 'updatedAt'
+                       ]);
+
+      allow delete: if isOwner(userId) && isValidId(userId);
+
+      // Learning Goals Subcollection
+      match /learningGoals/{goalId} {
+        allow get: if isOwner(userId) && isValidId(goalId);
+        allow list: if isOwner(userId);
+
+        allow create: if isOwner(userId) &&
+                         isValidId(goalId) &&
+                         incoming().keys().hasAll([
+                           'title', 'cadence', 'metricType', 'categoryFilter',
+                           'targetCount', 'active', 'createdAt', 'updatedAt'
+                         ]) &&
+                         incoming().keys().hasOnly([
+                           'title', 'cadence', 'metricType', 'categoryFilter',
+                           'targetCount', 'active', 'createdAt', 'updatedAt'
+                         ]) &&
+                         isValidLearningGoal(incoming());
+
+        allow update: if isSignedIn() &&
+                         isValidLearningGoal(incoming()) &&
+                         isOwner(userId) &&
+                         isValidId(goalId) &&
+                         incoming().createdAt == existing().createdAt &&
+                         incoming().diff(existing()).affectedKeys().hasOnly([
+                           'title', 'cadence', 'metricType', 'categoryFilter',
+                           'targetCount', 'active', 'updatedAt'
+                         ]);
+
+        allow delete: if isOwner(userId) && isValidId(goalId);
+      }
+
+      // Phrase Progress & Mistake Telemetry Subcollection
+      match /phraseProgress/{phraseId} {
+        allow get: if isOwner(userId) && isValidId(phraseId);
+        allow list: if isOwner(userId);
+
+        allow create: if isOwner(userId) &&
+                         isValidId(phraseId) &&
+                         incoming().keys().hasAll([
+                           'phraseId', 'category', 'bookmarked', 'lessonCompleted',
+                           'lessonCompletedDay', 'lessonCompletedWeek', 'masteryLevel',
+                           'masteredDay', 'masteredWeek', 'correctCount', 'attemptCount',
+                           'missCount', 'consecutiveCorrect', 'missedClozeCount',
+                           'missedRegisterCount', 'missedMeaningCount', 'lastReviewedDay',
+                           'createdAt', 'updatedAt'
+                         ]) &&
+                         incoming().keys().hasOnly([
+                           'phraseId', 'category', 'bookmarked', 'lessonCompleted',
+                           'lessonCompletedDay', 'lessonCompletedWeek', 'masteryLevel',
+                           'masteredDay', 'masteredWeek', 'correctCount', 'attemptCount',
+                           'missCount', 'consecutiveCorrect', 'missedClozeCount',
+                           'missedRegisterCount', 'missedMeaningCount', 'lastReviewedDay',
+                           'createdAt', 'updatedAt'
+                         ]) &&
+                         isValidPhraseProgress(incoming(), phraseId);
+
+        allow update: if isSignedIn() &&
+                         isValidPhraseProgress(incoming(), phraseId) &&
+                         isOwner(userId) &&
+                         isValidId(phraseId) &&
+                         incoming().phraseId == existing().phraseId &&
+                         incoming().createdAt == existing().createdAt &&
+                         incoming().diff(existing()).affectedKeys().hasOnly([
+                           'category', 'bookmarked', 'lessonCompleted',
+                           'lessonCompletedDay', 'lessonCompletedWeek', 'masteryLevel',
+                           'masteredDay', 'masteredWeek', 'correctCount', 'attemptCount',
+                           'missCount', 'consecutiveCorrect', 'missedClozeCount',
+                           'missedRegisterCount', 'missedMeaningCount', 'lastReviewedDay',
+                           'updatedAt'
+                         ]);
+
+        allow delete: if isOwner(userId) && isValidId(phraseId);
+      }
+
+      // Custom AI-Explored Phrases Subcollection
+      match /customPhrases/{phraseId} {
+        allow get: if isOwner(userId) && isValidId(phraseId);
+        allow list: if isOwner(userId);
+
+        allow create: if isOwner(userId) &&
+                         isValidId(phraseId) &&
+                         incoming().keys().hasAll([
+                           'term', 'ipa', 'category', 'register', 'cefrLevel',
+                           'definition', 'nuanceSummary', 'dialogue', 'etymology',
+                           'synonyms', 'antonyms', 'usageNotes', 'createdAt', 'updatedAt'
+                         ]) &&
+                         incoming().keys().hasOnly([
+                           'term', 'ipa', 'category', 'register', 'cefrLevel',
+                           'definition', 'nuanceSummary', 'dialogue', 'etymology',
+                           'synonyms', 'antonyms', 'usageNotes', 'createdAt', 'updatedAt'
+                         ]) &&
+                         isValidCustomPhrase(incoming());
+
+        allow update: if isSignedIn() &&
+                         isValidCustomPhrase(incoming()) &&
+                         isOwner(userId) &&
+                         isValidId(phraseId) &&
+                         incoming().createdAt == existing().createdAt &&
+                         incoming().diff(existing()).affectedKeys().hasOnly([
+                           'term', 'ipa', 'category', 'register', 'cefrLevel',
+                           'definition', 'nuanceSummary', 'dialogue', 'etymology',
+                           'synonyms', 'antonyms', 'usageNotes', 'updatedAt'
+                         ]);
+
+        allow delete: if isOwner(userId) && isValidId(phraseId);
+      }
+
+      // Quiz Sessions Subcollection (append-only history)
+      match /quizSessions/{sessionId} {
+        allow get: if isOwner(userId) && isValidId(sessionId);
+        allow list: if isOwner(userId);
+
+        allow create: if isOwner(userId) &&
+                         isValidId(sessionId) &&
+                         incoming().keys().hasAll([
+                           'mode', 'category', 'score', 'totalQuestions',
+                           'missedPhraseIds', 'missedCloze', 'missedRegister',
+                           'missedMeaning', 'periodDay', 'periodWeek', 'completedAt'
+                         ]) &&
+                         incoming().keys().hasOnly([
+                           'mode', 'category', 'score', 'totalQuestions',
+                           'missedPhraseIds', 'missedCloze', 'missedRegister',
+                           'missedMeaning', 'periodDay', 'periodWeek', 'completedAt'
+                         ]) &&
+                         isValidQuizSession(incoming());
+
+        allow update: if false;
+        allow delete: if isOwner(userId) && isValidId(sessionId);
+      }
+    }
+  }
+}

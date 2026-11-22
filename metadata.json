@@ -1,0 +1,6 @@
+{
+  "name": "Lexicon",
+  "description": "Minimalist editorial American English learning app for intermediate-to-advanced learners featuring daily slang, idioms, phrasal verbs, workplace terminology, dialogues, etymology, US audio pronunciation, interactive quizzes, personalized goals, and AI phrase lookup.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

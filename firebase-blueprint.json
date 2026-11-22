@@ -1,0 +1,388 @@
+{
+  "entities": {
+    "UserProfile": {
+      "title": "UserProfile",
+      "description": "Authenticated learner profile and cumulative study summary.",
+      "type": "object",
+      "properties": {
+        "userId": {
+          "type": "string",
+          "description": "Firebase Auth UID of the learner."
+        },
+        "displayName": {
+          "type": "string",
+          "description": "Learner display name."
+        },
+        "currentStreak": {
+          "type": "integer",
+          "description": "Current consecutive daily practice streak."
+        },
+        "longestStreak": {
+          "type": "integer",
+          "description": "All-time longest daily practice streak."
+        },
+        "lastPracticeDate": {
+          "type": "string",
+          "description": "ISO date string (YYYY-MM-DD) of last completed lesson or quiz."
+        },
+        "totalLessonsCompleted": {
+          "type": "integer",
+          "description": "Total distinct phrase lessons completed."
+        },
+        "totalQuizzesCompleted": {
+          "type": "integer",
+          "description": "Total interactive quizzes completed."
+        },
+        "cumulativeCorrectAnswers": {
+          "type": "integer",
+          "description": "Total quiz answers answered correctly."
+        },
+        "cumulativeQuizQuestions": {
+          "type": "integer",
+          "description": "Total quiz questions answered."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Creation timestamp written via FieldValue.serverTimestamp()."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Last update timestamp written via FieldValue.serverTimestamp()."
+        }
+      },
+      "required": [
+        "userId",
+        "displayName",
+        "currentStreak",
+        "longestStreak",
+        "lastPracticeDate",
+        "totalLessonsCompleted",
+        "totalQuizzesCompleted",
+        "cumulativeCorrectAnswers",
+        "cumulativeQuizQuestions",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "LearningGoal": {
+      "title": "LearningGoal",
+      "description": "User-configured daily or weekly personalized learning goal.",
+      "type": "object",
+      "properties": {
+        "title": {
+          "type": "string",
+          "description": "Human-readable goal label such as 'Learn 5 new idioms'."
+        },
+        "cadence": {
+          "type": "string",
+          "enum": ["DAILY", "WEEKLY"],
+          "description": "Goal cadence for automatic daily or weekly rollover."
+        },
+        "metricType": {
+          "type": "string",
+          "enum": ["LEARN_NEW", "MASTER_PHRASES", "COMPLETE_QUIZZES"],
+          "description": "Activity metric tracked toward targetCount."
+        },
+        "categoryFilter": {
+          "type": "string",
+          "enum": ["ALL", "SLANG", "IDIOM", "PHRASAL_VERB", "WORKPLACE"],
+          "description": "Phrase track scope for the goal."
+        },
+        "targetCount": {
+          "type": "integer",
+          "description": "Target completions required within the cadence period."
+        },
+        "active": {
+          "type": "boolean",
+          "description": "Whether the goal is actively tracked."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Creation timestamp written via FieldValue.serverTimestamp()."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Last update timestamp written via FieldValue.serverTimestamp()."
+        }
+      },
+      "required": [
+        "title",
+        "cadence",
+        "metricType",
+        "categoryFilter",
+        "targetCount",
+        "active",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "PhraseProgress": {
+      "title": "PhraseProgress",
+      "description": "Per-phrase lesson completion, bookmark, mastery level, and mistake diagnostics.",
+      "type": "object",
+      "properties": {
+        "phraseId": {
+          "type": "string",
+          "description": "Identifier matching the curated or custom phrase ID."
+        },
+        "category": {
+          "type": "string",
+          "enum": ["SLANG", "IDIOM", "PHRASAL_VERB", "WORKPLACE"],
+          "description": "Category of the phrase."
+        },
+        "bookmarked": {
+          "type": "boolean",
+          "description": "Whether the learner saved this phrase to their lexicon."
+        },
+        "lessonCompleted": {
+          "type": "boolean",
+          "description": "Whether the learner marked the phrase deep-dive lesson complete."
+        },
+        "lessonCompletedDay": {
+          "type": "string",
+          "description": "ISO day (YYYY-MM-DD) when lesson was completed, or empty string."
+        },
+        "lessonCompletedWeek": {
+          "type": "string",
+          "description": "ISO week (YYYY-Www) when lesson was completed, or empty string."
+        },
+        "masteryLevel": {
+          "type": "integer",
+          "description": "0=New, 1=Familiar, 2=Practicing, 3=Mastered."
+        },
+        "masteredDay": {
+          "type": "string",
+          "description": "ISO day (YYYY-MM-DD) when mastery reached level 3, or empty string."
+        },
+        "masteredWeek": {
+          "type": "string",
+          "description": "ISO week (YYYY-Www) when mastery reached level 3, or empty string."
+        },
+        "correctCount": {
+          "type": "integer",
+          "description": "Total correct quiz responses for this phrase."
+        },
+        "attemptCount": {
+          "type": "integer",
+          "description": "Total quiz attempts for this phrase."
+        },
+        "missCount": {
+          "type": "integer",
+          "description": "Total incorrect quiz responses for this phrase."
+        },
+        "consecutiveCorrect": {
+          "type": "integer",
+          "description": "Consecutive correct quiz answers streak for this phrase."
+        },
+        "missedClozeCount": {
+          "type": "integer",
+          "description": "Incorrect responses on Context Cloze questions."
+        },
+        "missedRegisterCount": {
+          "type": "integer",
+          "description": "Incorrect responses on Register & Nuance questions."
+        },
+        "missedMeaningCount": {
+          "type": "integer",
+          "description": "Incorrect responses on Meaning & Synonym Precision questions."
+        },
+        "lastReviewedDay": {
+          "type": "string",
+          "description": "ISO day (YYYY-MM-DD) of last review or quiz attempt."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Creation timestamp written via FieldValue.serverTimestamp()."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Last update timestamp written via FieldValue.serverTimestamp()."
+        }
+      },
+      "required": [
+        "phraseId",
+        "category",
+        "bookmarked",
+        "lessonCompleted",
+        "lessonCompletedDay",
+        "lessonCompletedWeek",
+        "masteryLevel",
+        "masteredDay",
+        "masteredWeek",
+        "correctCount",
+        "attemptCount",
+        "missCount",
+        "consecutiveCorrect",
+        "missedClozeCount",
+        "missedRegisterCount",
+        "missedMeaningCount",
+        "lastReviewedDay",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "CustomPhrase": {
+      "title": "CustomPhrase",
+      "description": "User-saved AI-explored American English phrase entry.",
+      "type": "object",
+      "properties": {
+        "term": {
+          "type": "string",
+          "description": "The American English expression."
+        },
+        "ipa": {
+          "type": "string",
+          "description": "IPA phonetic transcription."
+        },
+        "category": {
+          "type": "string",
+          "enum": ["SLANG", "IDIOM", "PHRASAL_VERB", "WORKPLACE"]
+        },
+        "register": {
+          "type": "string",
+          "enum": ["CASUAL", "CONVERSATIONAL", "PROFESSIONAL", "FORMAL"]
+        },
+        "cefrLevel": {
+          "type": "string",
+          "enum": ["B2", "C1", "C2"]
+        },
+        "definition": {
+          "type": "string"
+        },
+        "nuanceSummary": {
+          "type": "string"
+        },
+        "dialogue": {
+          "type": "array",
+          "description": "Multi-turn real-world dialogue maps with speaker and line."
+        },
+        "etymology": {
+          "type": "string"
+        },
+        "synonyms": {
+          "type": "array",
+          "description": "List of synonym maps with term and nuanceDifference."
+        },
+        "antonyms": {
+          "type": "array",
+          "description": "List of contrasting antonym strings."
+        },
+        "usageNotes": {
+          "type": "array",
+          "description": "List of advanced usage and register notes."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Creation timestamp written via FieldValue.serverTimestamp()."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Last update timestamp written via FieldValue.serverTimestamp()."
+        }
+      },
+      "required": [
+        "term",
+        "ipa",
+        "category",
+        "register",
+        "cefrLevel",
+        "definition",
+        "nuanceSummary",
+        "dialogue",
+        "etymology",
+        "synonyms",
+        "antonyms",
+        "usageNotes",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "QuizSession": {
+      "title": "QuizSession",
+      "description": "Immutable record of a completed interactive quiz session.",
+      "type": "object",
+      "properties": {
+        "mode": {
+          "type": "string",
+          "enum": ["SMART_REVIEW", "GOAL_DRILL", "CATEGORY_DRILL", "AI_CUSTOM"]
+        },
+        "category": {
+          "type": "string",
+          "enum": ["ALL", "SLANG", "IDIOM", "PHRASAL_VERB", "WORKPLACE"]
+        },
+        "score": {
+          "type": "integer"
+        },
+        "totalQuestions": {
+          "type": "integer"
+        },
+        "missedPhraseIds": {
+          "type": "array"
+        },
+        "missedCloze": {
+          "type": "integer"
+        },
+        "missedRegister": {
+          "type": "integer"
+        },
+        "missedMeaning": {
+          "type": "integer"
+        },
+        "periodDay": {
+          "type": "string"
+        },
+        "periodWeek": {
+          "type": "string"
+        },
+        "completedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Completion timestamp written via FieldValue.serverTimestamp()."
+        }
+      },
+      "required": [
+        "mode",
+        "category",
+        "score",
+        "totalQuestions",
+        "missedPhraseIds",
+        "missedCloze",
+        "missedRegister",
+        "missedMeaning",
+        "periodDay",
+        "periodWeek",
+        "completedAt"
+      ]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": { "$ref": "#/entities/UserProfile" },
+      "description": "Per-user learner profile and daily streak summary."
+    },
+    "/users/{userId}/learningGoals/{goalId}": {
+      "schema": { "$ref": "#/entities/LearningGoal" },
+      "description": "Per-user customizable daily and weekly learning goals."
+    },
+    "/users/{userId}/phraseProgress/{phraseId}": {
+      "schema": { "$ref": "#/entities/PhraseProgress" },
+      "description": "Per-user phrase lesson completion, mastery level, bookmarks, and mistake telemetry."
+    },
+    "/users/{userId}/customPhrases/{phraseId}": {
+      "schema": { "$ref": "#/entities/CustomPhrase" },
+      "description": "Per-user saved AI-generated American English phrases."
+    },
+    "/users/{userId}/quizSessions/{sessionId}": {
+      "schema": { "$ref": "#/entities/QuizSession" },
+      "description": "Per-user completed quiz history and mistake breakdown."
+    }
+  }
+}
