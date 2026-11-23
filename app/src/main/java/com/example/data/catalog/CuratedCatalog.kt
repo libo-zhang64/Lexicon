@@ -52,9 +52,9 @@ object CuratedCatalog {
     }
 
     private fun buildExpandedCatalog(context: Context): List<PhraseEntry> {
-        val result = ArrayList<PhraseEntry>(1024)
-        val seenIds = HashSet<String>(1100)
-        val seenTerms = HashSet<String>(1100)
+        val result = ArrayList<PhraseEntry>(12200)
+        val seenIds = HashSet<String>(13000)
+        val seenTerms = HashSet<String>(13000)
 
         // Exclude Daily Spotlight & Transfer Quiz Bank headwords so they stay strictly distinct!
         val excludedTerms = HashSet<String>().apply {
@@ -69,7 +69,7 @@ object CuratedCatalog {
             seenTerms.add(normalizeKey(entry.term))
         }
 
-        // 2. Load the 5 category TSV asset files (~250 per track -> ~1,250 entries total)
+        // 2. Load the 5 category TSV asset files (~1,000 per track -> ~5,000+ entries total)
         val assetMap = listOf(
             "catalog/slang.tsv" to PhraseCategory.SLANG,
             "catalog/idioms.tsv" to PhraseCategory.IDIOM,
@@ -87,19 +87,41 @@ object CuratedCatalog {
                 val line = rawLine.trim()
                 if (line.isEmpty() || line.startsWith("#")) continue
                 val parts = line.split("|")
-                if (parts.size < 8) continue
+                if (parts.size < 5) continue
 
                 val term = parts[0].trim()
                 val normalized = normalizeKey(term)
                 if (term.isEmpty() || normalized in excludedTerms || normalized in seenTerms) continue
 
-                val ipa = parts[1].trim()
-                val register = PhraseRegister.fromRaw(parts[2].trim())
-                val cefr = CefrLevel.fromRaw(parts[3].trim())
-                val definition = parts[4].trim()
-                val nuance = parts[5].trim()
-                val exampleLine = parts[6].trim()
-                val synAntRaw = parts[7].trim()
+                val ipa: String
+                val register: PhraseRegister
+                val cefr: CefrLevel
+                val definition: String
+                val nuance: String
+                val exampleLine: String
+                val synAntRaw: String
+
+                if (parts.size >= 8) {
+                    ipa = parts[1].trim()
+                    register = parseRegister(parts[2].trim())
+                    cefr = CefrLevel.fromRaw(parts[3].trim())
+                    definition = parts[4].trim()
+                    nuance = parts[5].trim()
+                    exampleLine = parts[6].trim()
+                    synAntRaw = parts[7].trim()
+                } else {
+                    ipa = ""
+                    register = parseRegister(parts[1].trim())
+                    cefr = CefrLevel.fromRaw(parts[2].trim())
+                    definition = parts[3].trim()
+                    synAntRaw = parts[4].trim()
+                    nuance = buildCompactNuance(category, register, definition)
+                    exampleLine = if (parts.size >= 6 && parts[5].isNotBlank()) {
+                        parts[5].trim()
+                    } else {
+                        buildCompactExampleLine(category, term, definition, abs(term.hashCode()))
+                    }
+                }
 
                 val id = makeStableId(category, term, idx, seenIds)
                 seenIds.add(id)
@@ -122,6 +144,67 @@ object CuratedCatalog {
         }
 
         return result
+    }
+
+    private fun parseRegister(raw: String): PhraseRegister = when (raw.uppercase(Locale.US)) {
+        "C", "CASUAL" -> PhraseRegister.CASUAL
+        "N", "CONVERSATIONAL" -> PhraseRegister.CONVERSATIONAL
+        "P", "PROFESSIONAL" -> PhraseRegister.PROFESSIONAL
+        "F", "FORMAL" -> PhraseRegister.FORMAL
+        else -> PhraseRegister.fromRaw(raw)
+    }
+
+    private fun buildCompactNuance(
+        category: PhraseCategory,
+        register: PhraseRegister,
+        definition: String
+    ): String {
+        val defLower = definition.trim().trimEnd('.').replaceFirstChar { it.lowercase(Locale.US) }
+        return when (category) {
+            PhraseCategory.SLANG -> "Used in ${register.label.lowercase(Locale.US)} American banter to express: $defLower."
+            PhraseCategory.IDIOM -> "Classic American figurative expression (${register.label.lowercase(Locale.US)}) meaning to $defLower."
+            PhraseCategory.PHRASAL_VERB -> "Natural multi-word verb in ${register.label.lowercase(Locale.US)} American speech for: $defLower."
+            PhraseCategory.WORKPLACE -> "High-precision US workplace phrasing (${register.label.lowercase(Locale.US)}) signaling: $defLower."
+            PhraseCategory.GRE_VOCAB -> "High-impact GRE academic term (${register.label.lowercase(Locale.US)}) conveying: $defLower."
+        }
+    }
+
+    private fun buildCompactExampleLine(
+        category: PhraseCategory,
+        term: String,
+        definition: String,
+        hash: Int
+    ): String {
+        val cleanTerm = term.replace(Regex("\\([^)]*\\)"), "").trim()
+        val defSnippet = definition.trim().trimEnd('.').replaceFirstChar { it.lowercase(Locale.US) }
+        val templates = when (category) {
+            PhraseCategory.SLANG -> listOf(
+                "Honestly, everyone in our group chat keeps saying \"$cleanTerm\" whenever they mean $defSnippet.",
+                "In casual American conversation, you'll hear people drop \"$cleanTerm\" right in the middle of a story.",
+                "My roommate used \"$cleanTerm\" at dinner last night—it really captures that exact vibe."
+            )
+            PhraseCategory.IDIOM -> listOf(
+                "You could really use \"$cleanTerm\" here—it sums up $defSnippet in just a few words.",
+                "That whole situation reminded me of the classic American idiom \"$cleanTerm\".",
+                "In everyday conversation, saying \"$cleanTerm\" lands way more vividly than a literal summary."
+            )
+            PhraseCategory.PHRASAL_VERB -> listOf(
+                "Native speakers naturally say \"$cleanTerm\" in that spot when they mean $defSnippet.",
+                "We should definitely \"$cleanTerm\" before Friday so the rest of the plan stays on track.",
+                "I heard someone use \"$cleanTerm\" on a podcast today and immediately noticed how smooth it sounded."
+            )
+            PhraseCategory.WORKPLACE -> listOf(
+                "During the executive review, our lead brought up \"$cleanTerm\" to address $defSnippet clearly.",
+                "Framing it around \"$cleanTerm\" keeps our client memo sharp, collaborative, and grounded.",
+                "You'll hear \"$cleanTerm\" constantly in US cross-functional syncs and quarterly planning."
+            )
+            PhraseCategory.GRE_VOCAB -> listOf(
+                "The editorial chose the word \"$cleanTerm\" specifically to capture $defSnippet with precision.",
+                "In analytical writing, \"$cleanTerm\" replaces a clunky clause with one crisp, authoritative term.",
+                "That journal article used \"$cleanTerm\" to sharpen its argument without wasting a single word."
+            )
+        }
+        return templates[hash % templates.size]
     }
 
     private fun synthesizePhraseEntry(
