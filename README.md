@@ -2,6 +2,8 @@
 
 Lexicon is a minimalist Android app for intermediate-to-advanced learners of American English. It helps learners build practical vocabulary through short, contextual lessons focused on modern usage.
 
+The current app version is **3.0** (version code **3**).
+
 ## Features
 
 - Daily slang, idioms, phrasal verbs, and workplace expressions
