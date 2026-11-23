@@ -6,7 +6,7 @@ The current app version is **3.0** (version code **3**).
 
 ## Features
 
-- Daily slang, idioms, phrasal verbs, and workplace expressions
+- Daily slang, idioms, phrasal verbs, workplace expressions, and GRE words.
 - Example dialogues, etymology, and US English audio pronunciation
 - Interactive quizzes, practice sessions, and personalized learning goals
 - Adaptive learning paths and phrase lookup powered by Firebase AI Logic
