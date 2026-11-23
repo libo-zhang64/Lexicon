@@ -20,13 +20,20 @@ import com.google.firebase.ai.GenerativeModel
 import com.google.firebase.ai.ai
 import com.google.firebase.ai.type.Schema
 import com.google.firebase.ai.type.generationConfig
+import java.util.concurrent.atomic.AtomicBoolean
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.TimeoutCancellationException
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeout
 import org.json.JSONObject
 
 private const val TAG = "AiLexiconRepository"
-private const val MODEL_NAME = "gemini-3.8-flash"
+private const val PRIMARY_MODEL_NAME = "gemini-3.8-flash"
+private const val FALLBACK_MODEL_NAME = "gemini-3.5-flash-lite"
+
+private class StalledFirstTokenException(message: String) : Exception(message)
 
 class AiLexiconRepository {
 
@@ -82,7 +89,7 @@ class AiLexiconRepository {
     )
 
     // Ultra-lean flat schema for Text Vocabulary Extraction:
-    // Avoids deeply nested per-item arrays to slash token volume and eliminate timeouts.
+    // Avoids deeply nested per-item arrays to slash token volume and keep responses fast.
     private val extractionSchema = Schema.obj(
         properties = mapOf(
             "passageLevel" to Schema.string("Short label, e.g. 'C1 Essay'"),
@@ -110,59 +117,155 @@ class AiLexiconRepository {
         )
     )
 
+    private val phraseConfig = generationConfig {
+        temperature = 0.55f
+        maxOutputTokens = 4096
+        responseMimeType = "application/json"
+        responseSchema = phraseSchema
+    }
+
+    private val quizConfig = generationConfig {
+        temperature = 0.6f
+        maxOutputTokens = 4096
+        responseMimeType = "application/json"
+        responseSchema = quizSchema
+    }
+
+    private val extractionConfig = generationConfig {
+        temperature = 0.4f
+        maxOutputTokens = 4096
+        responseMimeType = "application/json"
+        responseSchema = extractionSchema
+    }
+
+    // Primary models (Gemini 3.8 Flash)
     private val phraseModel by lazy {
-        Firebase.ai.generativeModel(
-            modelName = MODEL_NAME,
-            generationConfig = generationConfig {
-                temperature = 0.55f
-                maxOutputTokens = 1400
-                responseMimeType = "application/json"
-                responseSchema = phraseSchema
-            }
-        )
+        Firebase.ai.generativeModel(modelName = PRIMARY_MODEL_NAME, generationConfig = phraseConfig)
     }
-
     private val quizModel by lazy {
-        Firebase.ai.generativeModel(
-            modelName = MODEL_NAME,
-            generationConfig = generationConfig {
-                temperature = 0.6f
-                maxOutputTokens = 1800
-                responseMimeType = "application/json"
-                responseSchema = quizSchema
-            }
-        )
+        Firebase.ai.generativeModel(modelName = PRIMARY_MODEL_NAME, generationConfig = quizConfig)
     }
-
     private val extractionModel by lazy {
-        Firebase.ai.generativeModel(
-            modelName = MODEL_NAME,
-            generationConfig = generationConfig {
-                temperature = 0.4f
-                maxOutputTokens = 2200
-                responseMimeType = "application/json"
-                responseSchema = extractionSchema
-            }
-        )
+        Firebase.ai.generativeModel(modelName = PRIMARY_MODEL_NAME, generationConfig = extractionConfig)
     }
 
-    private suspend fun streamJsonPayload(
+    // High-throughput automatic failover models (Gemini 3.5 Flash-Lite) used when 3.8 Flash hits 503 high demand or stalls
+    private val phraseFallbackModel by lazy {
+        Firebase.ai.generativeModel(modelName = FALLBACK_MODEL_NAME, generationConfig = phraseConfig)
+    }
+    private val quizFallbackModel by lazy {
+        Firebase.ai.generativeModel(modelName = FALLBACK_MODEL_NAME, generationConfig = quizConfig)
+    }
+    private val extractionFallbackModel by lazy {
+        Firebase.ai.generativeModel(modelName = FALLBACK_MODEL_NAME, generationConfig = extractionConfig)
+    }
+
+    private suspend fun streamOnce(
         model: GenerativeModel,
         prompt: String,
-        timeoutMs: Long = 55_000L,
-        onChunkProgress: (charsReceived: Int) -> Unit = {}
-    ): String {
+        firstTokenTimeoutMs: Long,
+        totalTimeoutMs: Long,
+        onChunkProgress: (charsReceived: Int) -> Unit
+    ): String = coroutineScope {
         val builder = StringBuilder(2048)
-        withTimeout(timeoutMs) {
-            model.generateContentStream(prompt).collect { chunk ->
-                val text = chunk.text
-                if (!text.isNullOrEmpty()) {
-                    builder.append(text)
-                    onChunkProgress(builder.length)
+        val firstChunkReceived = AtomicBoolean(false)
+        withTimeout(totalTimeoutMs) {
+            val stallWatchdog = launch {
+                delay(firstTokenTimeoutMs)
+                if (!firstChunkReceived.get()) {
+                    throw StalledFirstTokenException("No tokens received within ${firstTokenTimeoutMs / 1000}s")
                 }
             }
+            try {
+                model.generateContentStream(prompt).collect { chunk ->
+                    val text = chunk.text
+                    if (!text.isNullOrEmpty()) {
+                        if (firstChunkReceived.compareAndSet(false, true)) {
+                            stallWatchdog.cancel()
+                        }
+                        builder.append(text)
+                        onChunkProgress(builder.length)
+                    }
+                }
+            } finally {
+                stallWatchdog.cancel()
+            }
         }
-        return builder.toString().trim()
+        builder.toString().trim()
+    }
+
+    /**
+     * Streams JSON from Gemini 3.8 Flash first. If the upstream model returns a transient
+     * high-demand/503 capacity error or stalls before streaming its first token, automatically
+     * fails over to Gemini 3.5 Flash-Lite so the user gets a fast, reliable result.
+     */
+    private suspend fun streamJsonPayloadWithFailover(
+        primaryModel: GenerativeModel,
+        fallbackModel: GenerativeModel,
+        prompt: String,
+        onFailoverNotice: (status: String) -> Unit,
+        onChunkProgress: (charsReceived: Int) -> Unit
+    ): String {
+        try {
+            val primaryResult = streamOnce(
+                model = primaryModel,
+                prompt = prompt,
+                firstTokenTimeoutMs = 16_000L,
+                totalTimeoutMs = 28_000L,
+                onChunkProgress = onChunkProgress
+            )
+            if (primaryResult.isNotBlank()) {
+                return primaryResult
+            }
+            Log.w(TAG, "$PRIMARY_MODEL_NAME returned blank payload; retrying on $FALLBACK_MODEL_NAME")
+        } catch (e: CancellationException) {
+            if (e !is TimeoutCancellationException) throw e
+            Log.w(TAG, "$PRIMARY_MODEL_NAME timed out; failing over to $FALLBACK_MODEL_NAME", e)
+        } catch (e: Exception) {
+            if (!isCapacityOrTimeoutError(e)) {
+                throw e
+            }
+            Log.w(TAG, "$PRIMARY_MODEL_NAME hit high demand / stall (${e.message}); failing over to $FALLBACK_MODEL_NAME")
+        }
+
+        onFailoverNotice("Gemini 3.8 Flash is busy — switching to fast Gemini 3.5 Flash-Lite...")
+        return streamOnce(
+            model = fallbackModel,
+            prompt = prompt,
+            firstTokenTimeoutMs = 20_000L,
+            totalTimeoutMs = 35_000L,
+            onChunkProgress = onChunkProgress
+        )
+    }
+
+    private fun isCapacityOrTimeoutError(error: Throwable): Boolean {
+        if (error is TimeoutCancellationException || error is StalledFirstTokenException) return true
+        val msg = buildString {
+            append(error.message.orEmpty())
+            append(' ')
+            append(error.cause?.message.orEmpty())
+        }.lowercase()
+        return msg.contains("high demand") ||
+            msg.contains("overloaded") ||
+            msg.contains("503") ||
+            msg.contains("unavailable") ||
+            msg.contains("429") ||
+            msg.contains("resource exhausted") ||
+            msg.contains("quota") ||
+            msg.contains("deadline") ||
+            msg.contains("timed out") ||
+            msg.contains("timeout") ||
+            msg.contains("try again later")
+    }
+
+    private fun friendlyAiError(error: Throwable, fallbackMessage: String): Exception {
+        if (error is TimeoutCancellationException || error is StalledFirstTokenException) {
+            return Exception("Gemini servers are responding slowly right now (high demand). Please tap Retry in a moment.")
+        }
+        if (isCapacityOrTimeoutError(error)) {
+            return Exception("Google's Gemini models are temporarily experiencing high demand (server capacity spike). Please try again in a few seconds.")
+        }
+        return Exception(error.localizedMessage ?: fallbackMessage)
     }
 
     suspend fun explainPhrase(
@@ -181,7 +284,12 @@ class AiLexiconRepository {
             """.trimIndent()
 
             onProgress("Connecting to Gemini 3.8 Flash...", 0)
-            val rawJson = streamJsonPayload(phraseModel, prompt) { chars ->
+            val rawJson = streamJsonPayloadWithFailover(
+                primaryModel = phraseModel,
+                fallbackModel = phraseFallbackModel,
+                prompt = prompt,
+                onFailoverNotice = { status -> onProgress(status, 0) }
+            ) { chars ->
                 val stage = when {
                     chars < 150 -> "Defining \"$cleaned\"..."
                     chars < 450 -> "Writing real US conversation..."
@@ -252,14 +360,16 @@ class AiLexiconRepository {
                     source = PhraseSource.AI_GENERATED
                 )
             )
-        } catch (e: TimeoutCancellationException) {
-            Log.e(TAG, "AI phrase explanation timed out", e)
-            Result.failure(Exception("Phrase lookup timed out. Please check your connection and try again."))
         } catch (e: CancellationException) {
-            throw e
+            if (e is TimeoutCancellationException) {
+                Log.e(TAG, "AI phrase explanation timed out", e)
+                Result.failure(friendlyAiError(e, "Phrase lookup timed out."))
+            } else {
+                throw e
+            }
         } catch (e: Exception) {
             Log.e(TAG, "AI phrase explanation failed", e)
-            Result.failure(Exception(e.localizedMessage ?: "Could not explain phrase right now."))
+            Result.failure(friendlyAiError(e, "Could not explain phrase right now."))
         }
     }
 
@@ -289,19 +399,26 @@ class AiLexiconRepository {
             """.trimIndent()
 
             onProgress("Streaming personalized quiz...", 0)
-            val rawJson = streamJsonPayload(quizModel, prompt) { chars ->
+            val rawJson = streamJsonPayloadWithFailover(
+                primaryModel = quizModel,
+                fallbackModel = quizFallbackModel,
+                prompt = prompt,
+                onFailoverNotice = { status -> onProgress(status, 0) }
+            ) { chars ->
                 val countEst = (chars / 260).coerceIn(1, 5)
                 onProgress("Drafting question $countEst of 5...", chars)
             }
             parseQuizResponse(rawJson, isTransfer = false, idLookup = emptyMap())
-        } catch (e: TimeoutCancellationException) {
-            Log.e(TAG, "AI quiz generation timed out", e)
-            Result.failure(Exception("Quiz generation timed out. Tap retry to try again."))
         } catch (e: CancellationException) {
-            throw e
+            if (e is TimeoutCancellationException) {
+                Log.e(TAG, "AI quiz generation timed out", e)
+                Result.failure(friendlyAiError(e, "Quiz generation timed out."))
+            } else {
+                throw e
+            }
         } catch (e: Exception) {
             Log.e(TAG, "AI quiz generation failed", e)
-            Result.failure(Exception(e.localizedMessage ?: "Could not generate AI quiz right now."))
+            Result.failure(friendlyAiError(e, "Could not generate AI quiz right now."))
         }
     }
 
@@ -334,19 +451,26 @@ class AiLexiconRepository {
             """.trimIndent()
 
             onProgress("Crafting fresh AI conversations for your learned words...", 0)
-            val rawJson = streamJsonPayload(quizModel, prompt) { chars ->
+            val rawJson = streamJsonPayloadWithFailover(
+                primaryModel = quizModel,
+                fallbackModel = quizFallbackModel,
+                prompt = prompt,
+                onFailoverNotice = { status -> onProgress(status, 0) }
+            ) { chars ->
                 val est = (chars / 250).coerceIn(1, selected.size)
                 onProgress("Writing unseen scenario $est of ${selected.size}...", chars)
             }
             parseQuizResponse(rawJson, isTransfer = true, idLookup = idLookup)
-        } catch (e: TimeoutCancellationException) {
-            Log.e(TAG, "AI transfer boost timed out", e)
-            Result.failure(Exception("AI Transfer Boost timed out. You can use Instant Transfer or retry."))
         } catch (e: CancellationException) {
-            throw e
+            if (e is TimeoutCancellationException) {
+                Log.e(TAG, "AI transfer boost timed out", e)
+                Result.failure(friendlyAiError(e, "AI Transfer Boost timed out. You can use Instant Transfer or retry."))
+            } else {
+                throw e
+            }
         } catch (e: Exception) {
             Log.e(TAG, "AI transfer boost failed", e)
-            Result.failure(Exception(e.localizedMessage ?: "Could not generate AI Transfer scenarios right now."))
+            Result.failure(friendlyAiError(e, "Could not generate AI Transfer scenarios right now."))
         }
     }
 
@@ -421,7 +545,12 @@ class AiLexiconRepository {
             """.trimIndent()
 
             onProgress("Scanning passage with Gemini 3.8 Flash...", 0)
-            val rawJson = streamJsonPayload(extractionModel, prompt) { chars ->
+            val rawJson = streamJsonPayloadWithFailover(
+                primaryModel = extractionModel,
+                fallbackModel = extractionFallbackModel,
+                prompt = prompt,
+                onFailoverNotice = { status -> onProgress(status, 0) }
+            ) { chars ->
                 val stage = when {
                     chars < 220 -> "Identifying high-impact vocabulary..."
                     chars < 700 -> "Extracting excerpts & nuances..."
@@ -518,14 +647,16 @@ class AiLexiconRepository {
                     )
                 )
             }
-        } catch (e: TimeoutCancellationException) {
-            Log.e(TAG, "Text vocabulary extraction timed out", e)
-            Result.failure(Exception("Text analysis timed out. Try a shorter excerpt or tap Try Again."))
         } catch (e: CancellationException) {
-            throw e
+            if (e is TimeoutCancellationException) {
+                Log.e(TAG, "Text vocabulary extraction timed out", e)
+                Result.failure(friendlyAiError(e, "Text analysis timed out."))
+            } else {
+                throw e
+            }
         } catch (e: Exception) {
             Log.e(TAG, "Text vocabulary extraction failed", e)
-            Result.failure(Exception(e.localizedMessage ?: "Could not analyze the text right now."))
+            Result.failure(friendlyAiError(e, "Could not analyze the text right now."))
         }
     }
 }
