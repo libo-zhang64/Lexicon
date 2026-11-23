@@ -30,11 +30,11 @@ service cloud.firestore {
     }
 
     function isValidCategory(c) {
-      return c in ['SLANG', 'IDIOM', 'PHRASAL_VERB', 'WORKPLACE'];
+      return c in ['SLANG', 'IDIOM', 'PHRASAL_VERB', 'WORKPLACE', 'GRE_VOCAB'];
     }
 
     function isValidCategoryFilter(c) {
-      return c in ['ALL', 'SLANG', 'IDIOM', 'PHRASAL_VERB', 'WORKPLACE'];
+      return c in ['ALL', 'SLANG', 'IDIOM', 'PHRASAL_VERB', 'WORKPLACE', 'GRE_VOCAB'];
     }
 
     function isValidRegister(r) {
@@ -54,7 +54,7 @@ service cloud.firestore {
     }
 
     function isValidQuizMode(m) {
-      return m in ['SMART_REVIEW', 'GOAL_DRILL', 'CATEGORY_DRILL', 'AI_CUSTOM'];
+      return m in ['SMART_REVIEW', 'GOAL_DRILL', 'CATEGORY_DRILL', 'TRANSFER_CHALLENGE', 'AI_CUSTOM'];
     }
 
     // --- Entity Validation Blueprints ---

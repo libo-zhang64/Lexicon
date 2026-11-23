@@ -73,7 +73,8 @@ class QuizViewModel(
             progressMap = progressMap,
             categoryFilter = category,
             focusPhraseIds = focusPhraseIds,
-            questionCount = questionCount
+            questionCount = questionCount,
+            includeTransfer = (mode == QuizMode.SMART_REVIEW)
         )
         if (questions.isEmpty()) {
             _uiState.value = QuizUiState.Error("No phrases available for this quiz track.")
@@ -89,11 +90,63 @@ class QuizViewModel(
         )
     }
 
+    fun startTransferQuiz(
+        category: CategoryFilter = CategoryFilter.ALL,
+        questionCount: Int = 5
+    ) {
+        val questions = CuratedQuizGenerator.buildTransferQuiz(
+            categoryFilter = category,
+            questionCount = questionCount
+        )
+        if (questions.isEmpty()) {
+            _uiState.value = QuizUiState.Error("No transfer challenges available right now.")
+            return
+        }
+        _uiState.value = QuizUiState.Active(
+            mode = QuizMode.TRANSFER_CHALLENGE,
+            category = category,
+            questions = questions,
+            currentIndex = 0,
+            selectedOptionIndex = null,
+            records = emptyList()
+        )
+    }
+
     fun startSinglePhraseMiniQuiz(target: PhraseEntry, allPhrases: List<PhraseEntry>) {
         val questions = CuratedQuizGenerator.buildSinglePhraseMiniQuiz(target, allPhrases)
         _uiState.value = QuizUiState.Active(
             mode = QuizMode.SMART_REVIEW,
             category = CategoryFilter.fromCategory(target.category),
+            questions = questions,
+            currentIndex = 0,
+            selectedOptionIndex = null,
+            records = emptyList()
+        )
+    }
+
+    fun startExtractedQuiz(
+        extractedPhrases: List<PhraseEntry>,
+        allPhrases: List<PhraseEntry>,
+        progressMap: Map<String, PhraseProgressDoc>
+    ) {
+        if (extractedPhrases.isEmpty()) return
+        val extractedIds = extractedPhrases.map { it.id }
+        val combinedPool = (extractedPhrases + allPhrases).distinctBy { it.id }
+        val questions = CuratedQuizGenerator.buildQuiz(
+            allPhrases = combinedPool,
+            progressMap = progressMap,
+            categoryFilter = CategoryFilter.ALL,
+            focusPhraseIds = extractedIds,
+            questionCount = extractedPhrases.size.coerceIn(3, 6),
+            includeTransfer = false
+        )
+        if (questions.isEmpty()) {
+            _uiState.value = QuizUiState.Error("Could not build a quiz from these extracted items.")
+            return
+        }
+        _uiState.value = QuizUiState.Active(
+            mode = QuizMode.SMART_REVIEW,
+            category = CategoryFilter.ALL,
             questions = questions,
             currentIndex = 0,
             selectedOptionIndex = null,

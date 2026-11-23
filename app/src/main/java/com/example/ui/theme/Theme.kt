@@ -9,68 +9,69 @@ import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.unit.dp
 
-private val EditorialLightColorScheme = lightColorScheme(
-    primary = SlateInkTeal,
-    onPrimary = OnSlateInkTeal,
-    primaryContainer = IceWashContainer,
-    onPrimaryContainer = OnIceWash,
-    secondary = EditorialTerracotta,
-    onSecondary = OnTerracotta,
-    secondaryContainer = TerracottaWash,
-    onSecondaryContainer = OnTerracottaWash,
-    tertiary = SageLeaf,
-    onTertiary = OnSageLeaf,
-    tertiaryContainer = SageWash,
-    onTertiaryContainer = OnSageWash,
-    background = PaperBackground,
-    onBackground = DeepPrintingInk,
-    surface = PaperBackground,
-    onSurface = DeepPrintingInk,
-    surfaceVariant = LinenSurfaceLow,
-    onSurfaceVariant = GraphitePencil,
-    surfaceContainerLowest = WarmWhiteCard,
-    surfaceContainerLow = LinenSurfaceLow,
-    surfaceContainer = ParchmentSurface,
-    surfaceContainerHigh = ParchmentSurfaceHigh,
-    outline = MutedInkOutline,
-    outlineVariant = HairlineRule,
-    error = EditorialError,
-    errorContainer = EditorialErrorContainer
+private val BrightDaylightColorScheme = lightColorScheme(
+    primary = VividCobaltPrimary,
+    onPrimary = OnCobaltPrimary,
+    primaryContainer = SkyBlueContainer,
+    onPrimaryContainer = OnSkyBlueContainer,
+    secondary = SunlitAmberSecondary,
+    onSecondary = OnAmberSecondary,
+    secondaryContainer = WarmSunContainer,
+    onSecondaryContainer = OnWarmSunContainer,
+    tertiary = FreshEmeraldTertiary,
+    onTertiary = OnEmeraldTertiary,
+    tertiaryContainer = MintWashContainer,
+    onTertiaryContainer = OnMintWashContainer,
+    background = DaylightBackground,
+    onBackground = CrispInkText,
+    surface = DaylightBackground,
+    onSurface = CrispInkText,
+    surfaceVariant = SoftSkySurfaceLow,
+    onSurfaceVariant = SlateSecondaryText,
+    surfaceContainerLowest = BrightCardSurface,
+    surfaceContainerLow = SoftSkySurfaceLow,
+    surfaceContainer = CrispTintSurface,
+    surfaceContainerHigh = CrispTintSurfaceHigh,
+    outline = SoftBorderOutline,
+    outlineVariant = SubtleHairline,
+    error = CrispCoralError,
+    errorContainer = CrispCoralErrorContainer,
+    onErrorContainer = OnCrispCoralErrorContainer
 )
 
-private val EditorialDarkColorScheme = darkColorScheme(
-    primary = SoftInkTeal,
-    onPrimary = OnSoftInkTeal,
-    primaryContainer = DarkTealWash,
-    onPrimaryContainer = OnDarkTealWash,
-    secondary = MutedClay,
-    onSecondary = OnMutedClay,
-    secondaryContainer = DarkClayWash,
-    onSecondaryContainer = OnDarkClayWash,
-    tertiary = SoftSage,
-    onTertiary = OnSoftSage,
-    tertiaryContainer = DarkSageWash,
-    onTertiaryContainer = OnDarkSageWash,
-    background = CharcoalFolio,
-    onBackground = WarmIvoryInk,
-    surface = CharcoalFolio,
-    onSurface = WarmIvoryInk,
-    surfaceVariant = DarkSlateLow,
-    onSurfaceVariant = SoftAshText,
-    surfaceContainerLowest = CharcoalFolio,
-    surfaceContainerLow = DarkSlateLow,
-    surfaceContainer = DarkSlateCard,
-    surfaceContainerHigh = DarkSlateHigh,
-    outline = DarkRule,
-    outlineVariant = DarkRule
+private val CrispTwilightColorScheme = darkColorScheme(
+    primary = BrightSkyPrimary,
+    onPrimary = OnBrightSkyPrimary,
+    primaryContainer = DeepSkyContainer,
+    onPrimaryContainer = OnDeepSkyContainer,
+    secondary = SoftGoldSecondary,
+    onSecondary = OnSoftGoldSecondary,
+    secondaryContainer = DeepGoldContainer,
+    onSecondaryContainer = OnDeepGoldContainer,
+    tertiary = BrightMintTertiary,
+    onTertiary = OnBrightMintTertiary,
+    tertiaryContainer = DeepMintContainer,
+    onTertiaryContainer = OnDeepMintContainer,
+    background = TwilightBackground,
+    onBackground = BrightIvoryInk,
+    surface = TwilightBackground,
+    onSurface = BrightIvoryInk,
+    surfaceVariant = TwilightSurfaceLow,
+    onSurfaceVariant = CoolMutedText,
+    surfaceContainerLowest = TwilightCard,
+    surfaceContainerLow = TwilightSurfaceLow,
+    surfaceContainer = TwilightCard,
+    surfaceContainerHigh = TwilightSurfaceHigh,
+    outline = TwilightBorder,
+    outlineVariant = TwilightBorder
 )
 
 val LexiconShapes = Shapes(
-    extraSmall = RoundedCornerShape(6.dp),
-    small = RoundedCornerShape(10.dp),
-    medium = RoundedCornerShape(14.dp),
-    large = RoundedCornerShape(18.dp),
-    extraLarge = RoundedCornerShape(24.dp)
+    extraSmall = RoundedCornerShape(8.dp),
+    small = RoundedCornerShape(12.dp),
+    medium = RoundedCornerShape(16.dp),
+    large = RoundedCornerShape(20.dp),
+    extraLarge = RoundedCornerShape(28.dp)
 )
 
 @Composable
@@ -78,7 +79,7 @@ fun LexiconTheme(
     darkTheme: Boolean = isSystemInDarkTheme(),
     content: @Composable () -> Unit
 ) {
-    val colorScheme = if (darkTheme) EditorialDarkColorScheme else EditorialLightColorScheme
+    val colorScheme = if (darkTheme) CrispTwilightColorScheme else BrightDaylightColorScheme
     MaterialTheme(
         colorScheme = colorScheme,
         typography = LexiconTypography,

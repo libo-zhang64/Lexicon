@@ -27,10 +27,12 @@ import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Cancel
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.CloudDone
+import androidx.compose.material.icons.filled.Explore
 import androidx.compose.material.icons.filled.Psychology
 import androidx.compose.material.icons.filled.Quiz
 import androidx.compose.material.icons.filled.TrackChanges
 import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
@@ -67,6 +69,7 @@ fun PracticeScreen(
     speakingItemId: String?,
     onSpeak: (itemId: String, text: String) -> Unit,
     onStartCuratedQuiz: (mode: QuizMode, category: CategoryFilter, focusIds: List<String>) -> Unit,
+    onStartTransferQuiz: (category: CategoryFilter) -> Unit,
     onStartAiQuiz: (topic: String, category: CategoryFilter) -> Unit,
     onSelectAnswer: (Int) -> Unit,
     onNextOrFinish: () -> Unit,
@@ -85,6 +88,7 @@ fun PracticeScreen(
             is QuizUiState.Setup -> QuizSetupView(
                 lexiconState = lexiconState,
                 onStartCuratedQuiz = onStartCuratedQuiz,
+                onStartTransferQuiz = onStartTransferQuiz,
                 onStartAiQuiz = onStartAiQuiz
             )
 
@@ -126,6 +130,9 @@ fun PracticeScreen(
                 onDone = onResetQuiz,
                 onPracticeMissed = { missedIds ->
                     onStartCuratedQuiz(QuizMode.SMART_REVIEW, CategoryFilter.ALL, missedIds)
+                },
+                onRetryTransfer = {
+                    onStartTransferQuiz(quizState.category)
                 }
             )
 
@@ -172,6 +179,7 @@ fun PracticeScreen(
 private fun QuizSetupView(
     lexiconState: LexiconUiState,
     onStartCuratedQuiz: (mode: QuizMode, category: CategoryFilter, focusIds: List<String>) -> Unit,
+    onStartTransferQuiz: (category: CategoryFilter) -> Unit,
     onStartAiQuiz: (topic: String, category: CategoryFilter) -> Unit
 ) {
     var selectedCategory by rememberSaveable { mutableStateOf(CategoryFilter.ALL) }
@@ -189,15 +197,15 @@ private fun QuizSetupView(
     ) {
         item {
             EditorialSectionHeader(
-                eyebrow = "Active Recall",
+                eyebrow = "Active Recall & Transfer Learning",
                 title = "Interactive Practice"
             )
         }
 
-        // Smart Weak-Spot Review Card
+        // Smart Weak-Spot Review Card (blends library weak spots + unseen transfer items)
         item {
             EditorialCard(
-                containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.55f),
+                containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.72f),
                 borderColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.35f),
                 modifier = Modifier.fillMaxWidth()
             ) {
@@ -212,7 +220,7 @@ private fun QuizSetupView(
                         modifier = Modifier.size(20.dp)
                     )
                     Text(
-                        text = "ADAPTIVE RETENTION",
+                        text = "ADAPTIVE RETENTION + TRANSFER",
                         fontFamily = PhoneticMonoFamily,
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.primary
@@ -226,9 +234,9 @@ private fun QuizSetupView(
                 Spacer(modifier = Modifier.height(4.dp))
                 Text(
                     text = if (weakPhraseIds.isNotEmpty()) {
-                        "Prioritizes the ${weakPhraseIds.size} expression(s) you've missed recently alongside unmastered dialogues."
+                        "Prioritizes the ${weakPhraseIds.size} expression(s) you've missed recently, plus 2 unseen transfer-learning questions not in your lessons."
                     } else {
-                        "5 curated questions blending Context Cloze, Register & Nuance, and Synonym Precision."
+                        "5 curated questions blending your library with 2 unseen real-world transfer challenges to build natural intuition."
                     },
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
@@ -247,6 +255,65 @@ private fun QuizSetupView(
                     Icon(imageVector = Icons.Default.Quiz, contentDescription = null, modifier = Modifier.size(18.dp))
                     Spacer(modifier = Modifier.width(8.dp))
                     Text("Start 5-Question Session")
+                }
+            }
+        }
+
+        // Dedicated Transfer Learning Challenge Card (Unseen Expressions NOT in the learning library)
+        item {
+            EditorialCard(
+                containerColor = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.78f),
+                borderColor = MaterialTheme.colorScheme.secondary.copy(alpha = 0.42f),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Explore,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.secondary,
+                        modifier = Modifier.size(20.dp)
+                    )
+                    Text(
+                        text = "TRANSFER LEARNING • NOT IN LESSONS",
+                        fontFamily = PhoneticMonoFamily,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.secondary
+                    )
+                }
+                Spacer(modifier = Modifier.height(8.dp))
+                Text(
+                    text = "Unseen Expression Challenge",
+                    style = MaterialTheme.typography.headlineSmall,
+                    color = MaterialTheme.colorScheme.onSecondaryContainer
+                )
+                Spacer(modifier = Modifier.height(4.dp))
+                Text(
+                    text = "Test true comprehension on 5 authentic American English idioms, slang, phrasal verbs, and workplace nuances that are NOT in the learning page—training you to decode new phrases from context.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSecondaryContainer.copy(alpha = 0.88f)
+                )
+                Spacer(modifier = Modifier.height(14.dp))
+                Button(
+                    onClick = { onStartTransferQuiz(selectedCategory) },
+                    shape = RoundedCornerShape(12.dp),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = MaterialTheme.colorScheme.secondary,
+                        contentColor = MaterialTheme.colorScheme.onSecondary
+                    ),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(min = 48.dp)
+                        .testTag("practice_transfer_quiz_button")
+                ) {
+                    Icon(imageVector = Icons.Default.Explore, contentDescription = null, modifier = Modifier.size(18.dp))
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(
+                        if (selectedCategory == CategoryFilter.ALL) "Launch 5-Question Transfer Quiz"
+                        else "Transfer Quiz: ${selectedCategory.label}"
+                    )
                 }
             }
         }
@@ -411,6 +478,7 @@ private fun QuizSetupView(
     }
 }
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun ActiveQuizView(
     state: QuizUiState.Active,
@@ -458,17 +526,36 @@ private fun ActiveQuizView(
         }
 
         item {
-            EditorialCard(containerColor = MaterialTheme.colorScheme.surfaceContainerLowest) {
-                Row(
+            EditorialCard(
+                containerColor = MaterialTheme.colorScheme.surfaceContainerLowest,
+                borderColor = if (q.isTransferQuestion) MaterialTheme.colorScheme.secondary.copy(alpha = 0.45f)
+                else MaterialTheme.colorScheme.outlineVariant
+            ) {
+                FlowRow(
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    verticalAlignment = Alignment.CenterVertically
+                    verticalArrangement = Arrangement.spacedBy(6.dp)
                 ) {
+                    if (q.isTransferQuestion) {
+                        EditorialTag(
+                            text = "TRANSFER • UNSEEN",
+                            containerColor = MaterialTheme.colorScheme.secondaryContainer,
+                            contentColor = MaterialTheme.colorScheme.onSecondaryContainer
+                        )
+                    }
                     EditorialTag(
                         text = q.questionType.label,
                         containerColor = MaterialTheme.colorScheme.primaryContainer,
                         contentColor = MaterialTheme.colorScheme.onPrimaryContainer
                     )
                     EditorialTag(text = q.category.shortLabel)
+                }
+                if (q.isTransferQuestion) {
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Text(
+                        text = "Not in the learning library — infer the meaning and tone from context.",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.secondary
+                    )
                 }
                 Spacer(modifier = Modifier.height(12.dp))
                 Text(
@@ -615,9 +702,12 @@ private fun ActiveQuizView(
 private fun QuizSummaryView(
     state: QuizUiState.Summary,
     onDone: () -> Unit,
-    onPracticeMissed: (List<String>) -> Unit
+    onPracticeMissed: (List<String>) -> Unit,
+    onRetryTransfer: () -> Unit
 ) {
     val missed = state.records.filterNot { it.isCorrect }
+    val missedLibraryIds = missed.filterNot { it.question.isTransferQuestion }.map { it.question.phraseId }.distinct()
+    val hasTransferQuestions = state.records.any { it.question.isTransferQuestion }
 
     LazyColumn(
         modifier = Modifier
@@ -684,7 +774,11 @@ private fun QuizSummaryView(
                         missed.forEachIndexed { idx, record ->
                             Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
                                 Text(
-                                    text = "${record.question.phraseTerm} (${record.question.questionType.label})",
+                                    text = buildString {
+                                        append(record.question.phraseTerm)
+                                        append(" (${record.question.questionType.label})")
+                                        if (record.question.isTransferQuestion) append(" • Transfer")
+                                    },
                                     style = MaterialTheme.typography.titleSmall,
                                     color = MaterialTheme.colorScheme.onSurface
                                 )
@@ -705,16 +799,28 @@ private fun QuizSummaryView(
 
         item {
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                if (missed.isNotEmpty()) {
+                if (missedLibraryIds.isNotEmpty()) {
                     OutlinedButton(
-                        onClick = { onPracticeMissed(missed.map { it.question.phraseId }.distinct()) },
+                        onClick = { onPracticeMissed(missedLibraryIds) },
                         shape = RoundedCornerShape(12.dp),
                         modifier = Modifier
                             .fillMaxWidth()
                             .heightIn(min = 48.dp)
                             .testTag("quiz_retry_missed_button")
                     ) {
-                        Text("Retry Missed Expressions")
+                        Text("Retry Missed Library Expressions")
+                    }
+                }
+                if (state.mode == QuizMode.TRANSFER_CHALLENGE || hasTransferQuestions) {
+                    OutlinedButton(
+                        onClick = onRetryTransfer,
+                        shape = RoundedCornerShape(12.dp),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .heightIn(min = 48.dp)
+                            .testTag("quiz_new_transfer_button")
+                    ) {
+                        Text("Try Another Transfer Challenge")
                     }
                 }
                 Button(

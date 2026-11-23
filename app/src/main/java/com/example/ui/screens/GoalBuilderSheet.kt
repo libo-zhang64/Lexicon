@@ -58,7 +58,8 @@ val starterGoalPresets = listOf(
     GoalPreset("Learn 5 new idioms", GoalCadence.WEEKLY, GoalMetricType.LEARN_NEW, CategoryFilter.IDIOM, 5),
     GoalPreset("Master 3 phrasal verbs", GoalCadence.WEEKLY, GoalMetricType.MASTER_PHRASES, CategoryFilter.PHRASAL_VERB, 3),
     GoalPreset("Study 2 daily slang phrases", GoalCadence.DAILY, GoalMetricType.LEARN_NEW, CategoryFilter.SLANG, 2),
-    GoalPreset("Complete 2 workplace quizzes", GoalCadence.WEEKLY, GoalMetricType.COMPLETE_QUIZZES, CategoryFilter.WORKPLACE, 2)
+    GoalPreset("Complete 2 workplace quizzes", GoalCadence.WEEKLY, GoalMetricType.COMPLETE_QUIZZES, CategoryFilter.WORKPLACE, 2),
+    GoalPreset("Learn 5 new GRE words", GoalCadence.WEEKLY, GoalMetricType.LEARN_NEW, CategoryFilter.GRE_VOCAB, 5)
 )
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
@@ -91,6 +92,7 @@ fun GoalBuilderSheet(
                 CategoryFilter.IDIOM -> if (targetCount == 1) "idiom" else "idioms"
                 CategoryFilter.PHRASAL_VERB -> if (targetCount == 1) "phrasal verb" else "phrasal verbs"
                 CategoryFilter.WORKPLACE -> "workplace phrases"
+                CategoryFilter.GRE_VOCAB -> if (targetCount == 1) "GRE word" else "GRE words"
             }
         }
         val prefix = when (metric) {

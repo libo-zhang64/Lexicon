@@ -87,7 +87,7 @@
         },
         "categoryFilter": {
           "type": "string",
-          "enum": ["ALL", "SLANG", "IDIOM", "PHRASAL_VERB", "WORKPLACE"],
+          "enum": ["ALL", "SLANG", "IDIOM", "PHRASAL_VERB", "WORKPLACE", "GRE_VOCAB"],
           "description": "Phrase track scope for the goal."
         },
         "targetCount": {
@@ -131,7 +131,7 @@
         },
         "category": {
           "type": "string",
-          "enum": ["SLANG", "IDIOM", "PHRASAL_VERB", "WORKPLACE"],
+          "enum": ["SLANG", "IDIOM", "PHRASAL_VERB", "WORKPLACE", "GRE_VOCAB"],
           "description": "Category of the phrase."
         },
         "bookmarked": {
@@ -242,7 +242,7 @@
         },
         "category": {
           "type": "string",
-          "enum": ["SLANG", "IDIOM", "PHRASAL_VERB", "WORKPLACE"]
+          "enum": ["SLANG", "IDIOM", "PHRASAL_VERB", "WORKPLACE", "GRE_VOCAB"]
         },
         "register": {
           "type": "string",
@@ -312,11 +312,11 @@
       "properties": {
         "mode": {
           "type": "string",
-          "enum": ["SMART_REVIEW", "GOAL_DRILL", "CATEGORY_DRILL", "AI_CUSTOM"]
+          "enum": ["SMART_REVIEW", "GOAL_DRILL", "CATEGORY_DRILL", "TRANSFER_CHALLENGE", "AI_CUSTOM"]
         },
         "category": {
           "type": "string",
-          "enum": ["ALL", "SLANG", "IDIOM", "PHRASAL_VERB", "WORKPLACE"]
+          "enum": ["ALL", "SLANG", "IDIOM", "PHRASAL_VERB", "WORKPLACE", "GRE_VOCAB"]
         },
         "score": {
           "type": "integer"

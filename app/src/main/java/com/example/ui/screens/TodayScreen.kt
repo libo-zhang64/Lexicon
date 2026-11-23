@@ -1,10 +1,11 @@
 package com.example.ui.screens
 
 import androidx.compose.foundation.BorderStroke
-import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -17,38 +18,58 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.automirrored.filled.VolumeUp
+import androidx.compose.material.icons.filled.AutoAwesome
+import androidx.compose.material.icons.filled.AutoStories
 import androidx.compose.material.icons.filled.Bookmark
 import androidx.compose.material.icons.filled.BookmarkBorder
+import androidx.compose.material.icons.filled.BusinessCenter
+import androidx.compose.material.icons.filled.ChatBubbleOutline
+import androidx.compose.material.icons.filled.Explore
+import androidx.compose.material.icons.filled.FormatQuote
 import androidx.compose.material.icons.filled.LocalFireDepartment
-import androidx.compose.material.icons.filled.Quiz
+import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.SwapHoriz
+import androidx.compose.material.icons.filled.TrackChanges
+import androidx.compose.material.icons.filled.UploadFile
 import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilterChipDefaults
-import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.remember
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import com.example.data.catalog.DailySpotlightEntry
 import com.example.data.model.CategoryFilter
 import com.example.data.model.PeriodKeys
+import com.example.data.model.PhraseCategory
 import com.example.data.model.PhraseEntry
 import com.example.data.model.PhraseProgressDoc
-import com.example.domain.GoalProgressView
 import com.example.domain.ReviewRecommendation
 import com.example.ui.components.AudioListenButton
 import com.example.ui.components.EditorialCard
@@ -59,6 +80,7 @@ import com.example.ui.components.MasteryBadge
 import com.example.ui.theme.PhoneticMonoFamily
 import com.example.ui.viewmodel.LexiconUiState
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun TodayScreen(
     uiState: LexiconUiState,
@@ -67,17 +89,26 @@ fun TodayScreen(
     onSpeak: (itemId: String, text: String) -> Unit,
     onToggleSpeed: () -> Unit,
     onSelectCategory: (CategoryFilter) -> Unit,
+    onStartLearningSession: (CategoryFilter) -> Unit,
+    onStartTransferChallenge: () -> Unit,
+    onCycleSpotlight: (Int) -> Unit,
     onOpenPhrase: (PhraseEntry) -> Unit,
     onToggleBookmark: (PhraseEntry) -> Unit,
-    onQuickDailyQuiz: () -> Unit,
+    onOpenExplore: () -> Unit,
+    onOpenExtractor: () -> Unit,
     onRecommendationClick: (ReviewRecommendation) -> Unit,
     onOpenGoalsTab: () -> Unit,
     modifier: Modifier = Modifier
 ) {
-    val todayLabel = remember { PeriodKeys.readableTodayDate() }
-    val featured = uiState.featuredPhrase
-    val featuredProgress = uiState.progressMap[featured.id]
-    val topRec = uiState.insights.recommendations.firstOrNull()
+    var visibleCount by rememberSaveable(uiState.selectedCategory) { mutableIntStateOf(20) }
+
+    val totalEntries = uiState.allPhrases.size
+    val totalStudied = uiState.progressMap.values.count { it.lessonCompleted }
+    val filteredEntries = uiState.filteredTodayPhrases
+    val shownEntries = filteredEntries.take(visibleCount)
+    val nextUpPreview = uiState.allPhrases
+        .filter { uiState.progressMap[it.id]?.lessonCompleted != true }
+        .take(3)
 
     Box(
         modifier = modifier.fillMaxSize(),
@@ -90,274 +121,488 @@ fun TodayScreen(
             contentPadding = PaddingValues(horizontal = 20.dp, vertical = 16.dp),
             verticalArrangement = Arrangement.spacedBy(18.dp)
         ) {
-            // Editorial Masthead
-            item(key = "masthead") {
+            // 1. Bright Greeting Header + Library Counter + Streak Pill
+            item(key = "header") {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                    Column(modifier = Modifier.weight(1f)) {
                         Text(
-                            text = todayLabel.uppercase(),
+                            text = PeriodKeys.readableTodayDate().uppercase(),
                             fontFamily = PhoneticMonoFamily,
                             style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                            color = MaterialTheme.colorScheme.primary
                         )
+                        Spacer(modifier = Modifier.height(2.dp))
                         Text(
-                            text = "Lexicon",
-                            style = MaterialTheme.typography.displaySmall,
+                            text = "Learn American English",
+                            style = MaterialTheme.typography.headlineMedium,
                             color = MaterialTheme.colorScheme.onBackground
                         )
                     }
-
                     Surface(
-                        shape = RoundedCornerShape(14.dp),
+                        shape = CircleShape,
                         color = MaterialTheme.colorScheme.secondaryContainer,
-                        contentColor = MaterialTheme.colorScheme.onSecondaryContainer,
-                        modifier = Modifier.testTag("streak_badge")
+                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.secondary.copy(alpha = 0.3f))
                     ) {
                         Row(
                             modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
                             verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                            horizontalArrangement = Arrangement.spacedBy(5.dp)
                         ) {
                             Icon(
                                 imageVector = Icons.Default.LocalFireDepartment,
-                                contentDescription = "Current daily streak",
+                                contentDescription = "Current streak",
+                                tint = MaterialTheme.colorScheme.secondary,
                                 modifier = Modifier.size(18.dp)
                             )
                             Text(
                                 text = "${uiState.profile.currentStreak}d",
-                                fontFamily = PhoneticMonoFamily,
-                                style = MaterialTheme.typography.titleSmall
+                                fontWeight = FontWeight.Bold,
+                                style = MaterialTheme.typography.labelLarge,
+                                color = MaterialTheme.colorScheme.onSecondaryContainer
                             )
                         }
                     }
                 }
             }
 
-            // Sync error notice if present
+            // Cloud Sync Error Notice (if any)
             if (!uiState.syncError.isNullOrBlank()) {
                 item(key = "sync_error") {
-                    Surface(
-                        shape = RoundedCornerShape(12.dp),
-                        color = MaterialTheme.colorScheme.errorContainer,
-                        modifier = Modifier.fillMaxWidth()
+                    EditorialCard(
+                        containerColor = MaterialTheme.colorScheme.errorContainer,
+                        borderColor = MaterialTheme.colorScheme.error.copy(alpha = 0.4f)
                     ) {
                         Text(
-                            text = "Sync notice: ${uiState.syncError}",
+                            text = "Cloud sync note: ${uiState.syncError}",
                             style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onErrorContainer,
-                            modifier = Modifier.padding(12.dp)
+                            color = MaterialTheme.colorScheme.onErrorContainer
                         )
                     }
                 }
             }
 
-            // Active Learning Goals Strip
-            item(key = "goals_strip") {
-                ActiveGoalsStrip(
-                    goals = uiState.insights.activeGoals,
-                    onManageGoals = onOpenGoalsTab
-                )
-            }
-
-            // Adaptive Review Recommendation Banner
-            if (topRec != null) {
-                item(key = "top_recommendation") {
-                    EditorialCard(
-                        containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
-                        borderColor = MaterialTheme.colorScheme.outline,
-                        onClick = { onRecommendationClick(topRec) },
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .testTag("today_recommendation_card")
+            // 2. UNMISTAKABLE HERO ENTRY POINT FOR LEARNING
+            item(key = "hero_learning_launcher") {
+                Surface(
+                    shape = MaterialTheme.shapes.extraLarge,
+                    color = MaterialTheme.colorScheme.primary,
+                    contentColor = MaterialTheme.colorScheme.onPrimary,
+                    shadowElevation = 2.dp,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("hero_learning_card")
+                ) {
+                    Column(
+                        modifier = Modifier.padding(20.dp),
+                        verticalArrangement = Arrangement.spacedBy(12.dp)
                     ) {
                         Row(
                             modifier = Modifier.fillMaxWidth(),
                             horizontalArrangement = Arrangement.SpaceBetween,
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            EditorialTag(
-                                text = topRec.badge,
-                                containerColor = MaterialTheme.colorScheme.secondaryContainer,
-                                contentColor = MaterialTheme.colorScheme.onSecondaryContainer
-                            )
-                            Icon(
-                                imageVector = Icons.AutoMirrored.Filled.ArrowForward,
-                                contentDescription = topRec.actionLabel,
-                                tint = MaterialTheme.colorScheme.secondary,
-                                modifier = Modifier.size(18.dp)
+                            Surface(
+                                shape = CircleShape,
+                                color = MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.16f)
+                            ) {
+                                Text(
+                                    text = "DAILY LESSON DECK • 5 PHRASES",
+                                    fontFamily = PhoneticMonoFamily,
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onPrimary,
+                                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp)
+                                )
+                            }
+                            Text(
+                                text = "$totalStudied / $totalEntries studied",
+                                fontFamily = PhoneticMonoFamily,
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.9f)
                             )
                         }
-                        Spacer(modifier = Modifier.height(8.dp))
+
                         Text(
-                            text = topRec.title,
+                            text = if (totalStudied == 0) {
+                                "Start your first guided session"
+                            } else {
+                                "Continue your daily learning path"
+                            },
+                            style = MaterialTheme.typography.headlineSmall,
+                            color = MaterialTheme.colorScheme.onPrimary
+                        )
+
+                        Text(
+                            text = if (nextUpPreview.isNotEmpty()) {
+                                "Up next: ${nextUpPreview.joinToString(" • ") { it.term }}"
+                            } else {
+                                "Step through 5 interactive cards with US audio, dialogues, origin stories, and nuances."
+                            },
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.9f),
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis
+                        )
+
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(10.dp)
+                        ) {
+                            Button(
+                                onClick = { onStartLearningSession(CategoryFilter.ALL) },
+                                colors = ButtonDefaults.buttonColors(
+                                    containerColor = MaterialTheme.colorScheme.onPrimary,
+                                    contentColor = MaterialTheme.colorScheme.primary
+                                ),
+                                shape = RoundedCornerShape(14.dp),
+                                modifier = Modifier
+                                    .weight(1.35f)
+                                    .heightIn(min = 52.dp)
+                                    .testTag("start_learning_session_button")
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.PlayArrow,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(20.dp)
+                                )
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text(
+                                    text = "Start Learning",
+                                    fontWeight = FontWeight.Bold,
+                                    style = MaterialTheme.typography.labelLarge
+                                )
+                            }
+
+                            OutlinedButton(
+                                onClick = onStartTransferChallenge,
+                                border = BorderStroke(1.dp, MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.6f)),
+                                colors = ButtonDefaults.outlinedButtonColors(
+                                    contentColor = MaterialTheme.colorScheme.onPrimary
+                                ),
+                                shape = RoundedCornerShape(14.dp),
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .heightIn(min = 52.dp)
+                                    .testTag("today_transfer_challenge_button")
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Explore,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(18.dp)
+                                )
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text("Transfer Quiz")
+                            }
+                        }
+                    }
+                }
+            }
+
+            // 3. 5 LEARNING TRACKS (Daily Slang, Idioms, Phrasal Verbs, Workplace, and GRE Vocabulary)
+            item(key = "tracks_grid") {
+                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    EditorialSectionHeader(
+                        eyebrow = "$totalEntries B2–C2 & GRE Expressions",
+                        title = "Choose a Learning Track"
+                    )
+
+                    val trackConfigs = listOf(
+                        TrackMeta(
+                            category = PhraseCategory.SLANG,
+                            filter = CategoryFilter.SLANG,
+                            icon = Icons.Default.ChatBubbleOutline,
+                            accent = MaterialTheme.colorScheme.primary,
+                            tint = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.55f)
+                        ),
+                        TrackMeta(
+                            category = PhraseCategory.IDIOM,
+                            filter = CategoryFilter.IDIOM,
+                            icon = Icons.Default.FormatQuote,
+                            accent = MaterialTheme.colorScheme.secondary,
+                            tint = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.6f)
+                        ),
+                        TrackMeta(
+                            category = PhraseCategory.PHRASAL_VERB,
+                            filter = CategoryFilter.PHRASAL_VERB,
+                            icon = Icons.Default.SwapHoriz,
+                            accent = MaterialTheme.colorScheme.tertiary,
+                            tint = MaterialTheme.colorScheme.tertiaryContainer.copy(alpha = 0.6f)
+                        ),
+                        TrackMeta(
+                            category = PhraseCategory.WORKPLACE,
+                            filter = CategoryFilter.WORKPLACE,
+                            icon = Icons.Default.BusinessCenter,
+                            accent = MaterialTheme.colorScheme.primary,
+                            tint = MaterialTheme.colorScheme.surfaceContainerLow
+                        )
+                    )
+
+                    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                        trackConfigs.chunked(2).forEach { rowItems ->
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(10.dp)
+                            ) {
+                                rowItems.forEach { track ->
+                                    val countInTrack = uiState.allPhrases.count { it.category == track.category }
+                                    val studiedInTrack = uiState.allPhrases.count {
+                                        it.category == track.category &&
+                                            uiState.progressMap[it.id]?.lessonCompleted == true
+                                    }
+                                    TrackLauncherCard(
+                                        meta = track,
+                                        studiedCount = studiedInTrack,
+                                        totalCount = countInTrack,
+                                        onStartTrack = { onStartLearningSession(track.filter) },
+                                        modifier = Modifier.weight(1f)
+                                    )
+                                }
+                            }
+                        }
+
+                        // 5th Full-Width Track: GRE Vocabulary (equal ~250-word bank)
+                        val greMeta = TrackMeta(
+                            category = PhraseCategory.GRE_VOCAB,
+                            filter = CategoryFilter.GRE_VOCAB,
+                            icon = Icons.Default.AutoStories,
+                            accent = MaterialTheme.colorScheme.tertiary,
+                            tint = MaterialTheme.colorScheme.tertiaryContainer.copy(alpha = 0.55f)
+                        )
+                        val greTotal = uiState.allPhrases.count { it.category == PhraseCategory.GRE_VOCAB }
+                        val greStudied = uiState.allPhrases.count {
+                            it.category == PhraseCategory.GRE_VOCAB &&
+                                uiState.progressMap[it.id]?.lessonCompleted == true
+                        }
+                        TrackLauncherCard(
+                            meta = greMeta,
+                            studiedCount = greStudied,
+                            totalCount = greTotal,
+                            onStartTrack = { onStartLearningSession(CategoryFilter.GRE_VOCAB) },
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                    }
+                }
+            }
+
+            // 3b. UPLOAD TEXT & EXTRACT VOCAB QUICK ENTRY
+            item(key = "upload_extractor_banner") {
+                EditorialCard(
+                    containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.45f),
+                    borderColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.35f),
+                    onClick = onOpenExtractor,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("today_open_extractor_button")
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(12.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Surface(
+                            shape = RoundedCornerShape(12.dp),
+                            color = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.size(44.dp)
+                        ) {
+                            Box(contentAlignment = Alignment.Center) {
+                                Icon(
+                                    imageVector = Icons.Default.UploadFile,
+                                    contentDescription = null,
+                                    tint = MaterialTheme.colorScheme.onPrimary,
+                                    modifier = Modifier.size(22.dp)
+                                )
+                            }
+                        }
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = "PERSONAL VOCAB LAB",
+                                fontFamily = PhoneticMonoFamily,
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.primary
+                            )
+                            Text(
+                                text = "Upload Text & Extract Vocab",
+                                style = MaterialTheme.typography.titleMedium,
+                                color = MaterialTheme.colorScheme.onSurface
+                            )
+                            Text(
+                                text = "Upload a .txt/.md file or paste an article to pull GRE words, idioms & nuances into a study deck.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        Icon(
+                            imageVector = Icons.AutoMirrored.Filled.ArrowForward,
+                            contentDescription = "Open Text Extractor",
+                            tint = MaterialTheme.colorScheme.primary
+                        )
+                    }
+                }
+            }
+
+            // 4. WORD / PHRASE FOR TODAY (BONUS DISCOVERY • NOT IN LEARNING SESSIONS)
+            item(key = "daily_spotlight_${uiState.dailySpotlight.id}") {
+                DailySpotlightCard(
+                    entry = uiState.dailySpotlight,
+                    isSpeaking = speakingItemId == "spotlight_${uiState.dailySpotlight.id}",
+                    isSlowAudio = isSlowAudio,
+                    onSpeak = {
+                        onSpeak(
+                            "spotlight_${uiState.dailySpotlight.id}",
+                            "${uiState.dailySpotlight.term}. ${uiState.dailySpotlight.example}"
+                        )
+                    },
+                    onToggleSpeed = onToggleSpeed,
+                    onCycleNext = { onCycleSpotlight(1) }
+                )
+            }
+
+            // 5. Compact Active Goal Snapshot (if user has goals)
+            val activeGoal = uiState.insights.activeGoals.firstOrNull()
+            if (activeGoal != null) {
+                item(key = "goal_snapshot") {
+                    EditorialCard(
+                        containerColor = MaterialTheme.colorScheme.surfaceContainerLowest,
+                        borderColor = MaterialTheme.colorScheme.outlineVariant,
+                        onClick = onOpenGoalsTab,
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.TrackChanges,
+                                    contentDescription = null,
+                                    tint = MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.size(18.dp)
+                                )
+                                Text(
+                                    text = "ACTIVE GOAL • ${activeGoal.periodSubtitle.uppercase()}",
+                                    fontFamily = PhoneticMonoFamily,
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.primary
+                                )
+                            }
+                            Text(
+                                text = "${activeGoal.currentCount}/${activeGoal.targetCount}",
+                                fontFamily = PhoneticMonoFamily,
+                                fontWeight = FontWeight.Bold,
+                                style = MaterialTheme.typography.labelMedium,
+                                color = MaterialTheme.colorScheme.onSurface
+                            )
+                        }
+                        Spacer(modifier = Modifier.height(6.dp))
+                        Text(
+                            text = activeGoal.goal.title,
                             style = MaterialTheme.typography.titleMedium,
                             color = MaterialTheme.colorScheme.onSurface
                         )
-                        Spacer(modifier = Modifier.height(4.dp))
-                        Text(
-                            text = topRec.subtitle,
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                        Spacer(modifier = Modifier.height(10.dp))
-                        Text(
-                            text = topRec.actionLabel,
-                            style = MaterialTheme.typography.labelLarge,
-                            color = MaterialTheme.colorScheme.primary
+                        Spacer(modifier = Modifier.height(8.dp))
+                        EditorialProgressBar(
+                            fraction = activeGoal.fraction,
+                            fillColor = if (activeGoal.isCompleted) MaterialTheme.colorScheme.tertiary else MaterialTheme.colorScheme.primary,
+                            description = "${activeGoal.goal.title}: ${activeGoal.currentCount} of ${activeGoal.targetCount}"
                         )
                     }
                 }
             }
 
-            // Featured Phrase of the Day Hero Card
-            item(key = "featured_hero") {
-                EditorialCard(
-                    containerColor = MaterialTheme.colorScheme.surfaceContainerLowest,
-                    borderColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.35f),
-                    onClick = { onOpenPhrase(featured) },
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .testTag("featured_phrase_card")
-                ) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
+            // 6. Adaptive Review Nudge (when mistakes exist)
+            val topRec = uiState.insights.recommendations.firstOrNull()
+            if (topRec != null) {
+                item(key = "adaptive_nudge") {
+                    EditorialCard(
+                        containerColor = MaterialTheme.colorScheme.tertiaryContainer.copy(alpha = 0.45f),
+                        borderColor = MaterialTheme.colorScheme.tertiary.copy(alpha = 0.35f),
+                        modifier = Modifier.fillMaxWidth()
                     ) {
-                        Text(
-                            text = "PHRASE OF THE DAY • ${featured.cefrLevel.name}",
-                            fontFamily = PhoneticMonoFamily,
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.secondary
-                        )
-                        MasteryBadge(
-                            masteryLevel = featuredProgress?.masteryLevel?.toInt() ?: 0,
-                            lessonCompleted = featuredProgress?.lessonCompleted == true
-                        )
-                    }
-                    Spacer(modifier = Modifier.height(10.dp))
-                    Text(
-                        text = featured.term,
-                        style = MaterialTheme.typography.headlineLarge,
-                        color = MaterialTheme.colorScheme.onSurface
-                    )
-                    if (featured.ipa.isNotBlank()) {
-                        Spacer(modifier = Modifier.height(4.dp))
-                        Text(
-                            text = "${featured.ipa}  •  ${featured.register.label}",
-                            fontFamily = PhoneticMonoFamily,
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-                    Spacer(modifier = Modifier.height(12.dp))
-                    Text(
-                        text = featured.definition,
-                        style = MaterialTheme.typography.bodyLarge,
-                        color = MaterialTheme.colorScheme.onSurface
-                    )
-                    Spacer(modifier = Modifier.height(16.dp))
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        AudioListenButton(
-                            isSpeaking = speakingItemId == "featured_${featured.id}",
-                            isSlow = isSlowAudio,
-                            label = "Listen",
-                            onSpeakClick = { onSpeak("featured_${featured.id}", featured.term) },
-                            onToggleSpeed = onToggleSpeed,
-                            modifier = Modifier.testTag("featured_listen_button")
-                        )
-                        OutlinedButton(
-                            onClick = { onOpenPhrase(featured) },
-                            shape = RoundedCornerShape(12.dp),
-                            modifier = Modifier
-                                .heightIn(min = 48.dp)
-                                .testTag("featured_read_button")
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween
                         ) {
-                            Text("Read lesson")
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = "SMART REVIEW SUGGESTION",
+                                    fontFamily = PhoneticMonoFamily,
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.tertiary
+                                )
+                                Spacer(modifier = Modifier.height(4.dp))
+                                Text(
+                                    text = topRec.title,
+                                    style = MaterialTheme.typography.titleSmall,
+                                    color = MaterialTheme.colorScheme.onSurface
+                                )
+                                Text(
+                                    text = topRec.subtitle,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    maxLines = 2,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            }
+                            Spacer(modifier = Modifier.width(10.dp))
+                            Button(
+                                onClick = { onRecommendationClick(topRec) },
+                                shape = RoundedCornerShape(12.dp),
+                                modifier = Modifier
+                                    .heightIn(min = 48.dp)
+                                    .testTag("today_recommendation_cta")
+                            ) {
+                                Text("Go")
+                            }
                         }
                     }
                 }
             }
 
-            // Quick 5-Minute Daily Quiz Bar
-            item(key = "daily_quiz_cta") {
-                Surface(
-                    shape = MaterialTheme.shapes.large,
-                    color = MaterialTheme.colorScheme.primaryContainer,
-                    contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = 16.dp, vertical = 14.dp),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text(
-                                text = "Daily Retention Check",
-                                style = MaterialTheme.typography.titleMedium
-                            )
-                            Text(
-                                text = "5 adaptive questions from dialogues & register nuances",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.85f)
-                            )
-                        }
-                        Spacer(modifier = Modifier.width(12.dp))
-                        Button(
-                            onClick = onQuickDailyQuiz,
-                            shape = RoundedCornerShape(12.dp),
-                            modifier = Modifier
-                                .heightIn(min = 48.dp)
-                                .testTag("today_start_quiz_button")
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.Quiz,
-                                contentDescription = null,
-                                modifier = Modifier.size(18.dp)
-                            )
-                            Spacer(modifier = Modifier.width(6.dp))
-                            Text("Quiz")
-                        }
-                    }
-                }
-            }
-
-            // Category Filter Header + Chips
-            item(key = "catalog_header") {
+            // 7. Browse the 1,000-Entry Library
+            item(key = "browse_header") {
                 Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     EditorialSectionHeader(
-                        eyebrow = "Curated Collection",
-                        title = "American English Tracks"
+                        eyebrow = "Full Curriculum Library",
+                        title = "Browse Expressions",
+                        trailing = {
+                            TextButton(
+                                onClick = onOpenExplore,
+                                modifier = Modifier.testTag("browse_search_all_button")
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Search,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(16.dp)
+                                )
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text("Search All")
+                            }
+                        }
                     )
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .horizontalScroll(rememberScrollState()),
+
+                    LazyRow(
                         horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
-                        CategoryFilter.entries.forEach { filter ->
+                        items(CategoryFilter.entries) { filter ->
                             val selected = uiState.selectedCategory == filter
                             FilterChip(
                                 selected = selected,
                                 onClick = { onSelectCategory(filter) },
                                 label = { Text(filter.label) },
                                 colors = FilterChipDefaults.filterChipColors(
-                                    selectedContainerColor = MaterialTheme.colorScheme.primary,
-                                    selectedLabelColor = MaterialTheme.colorScheme.onPrimary
+                                    selectedContainerColor = MaterialTheme.colorScheme.primaryContainer,
+                                    selectedLabelColor = MaterialTheme.colorScheme.onPrimaryContainer
                                 ),
                                 modifier = Modifier
-                                    .heightIn(min = 48.dp)
+                                    .heightIn(min = 44.dp)
                                     .testTag("category_chip_${filter.name.lowercase()}")
                             )
                         }
@@ -365,8 +610,7 @@ fun TodayScreen(
                 }
             }
 
-            // Curated + Custom Phrase Cards
-            items(uiState.filteredTodayPhrases, key = { it.id }) { phrase ->
+            items(shownEntries, key = { it.id }) { phrase ->
                 PhraseListRowCard(
                     phrase = phrase,
                     progress = uiState.progressMap[phrase.id],
@@ -377,92 +621,246 @@ fun TodayScreen(
                 )
             }
 
+            if (filteredEntries.size > shownEntries.size) {
+                item(key = "load_more_entries") {
+                    OutlinedButton(
+                        onClick = { visibleCount += 30 },
+                        shape = RoundedCornerShape(14.dp),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .heightIn(min = 48.dp)
+                            .testTag("load_more_phrases_button")
+                    ) {
+                        Text("Load More (Showing ${shownEntries.size} of ${filteredEntries.size})")
+                    }
+                }
+            }
+
             item { Spacer(modifier = Modifier.height(24.dp)) }
         }
     }
 }
 
+private data class TrackMeta(
+    val category: PhraseCategory,
+    val filter: CategoryFilter,
+    val icon: ImageVector,
+    val accent: Color,
+    val tint: Color
+)
+
 @Composable
-private fun ActiveGoalsStrip(
-    goals: List<GoalProgressView>,
-    onManageGoals: () -> Unit
+private fun TrackLauncherCard(
+    meta: TrackMeta,
+    studiedCount: Int,
+    totalCount: Int,
+    onStartTrack: () -> Unit,
+    modifier: Modifier = Modifier
 ) {
+    val fraction = if (totalCount > 0) studiedCount.toFloat() / totalCount.toFloat() else 0f
     EditorialCard(
-        containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
-        modifier = Modifier
-            .fillMaxWidth()
-            .testTag("today_goals_strip")
+        containerColor = meta.tint,
+        borderColor = meta.accent.copy(alpha = 0.25f),
+        onClick = onStartTrack,
+        modifier = modifier.testTag("track_card_${meta.filter.name.lowercase()}")
     ) {
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Text(
-                text = "LEARNING GOALS",
-                fontFamily = PhoneticMonoFamily,
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.primary
-            )
             Surface(
-                onClick = onManageGoals,
-                shape = RoundedCornerShape(8.dp),
-                color = MaterialTheme.colorScheme.surfaceContainerHigh,
-                modifier = Modifier
-                    .heightIn(min = 36.dp)
-                    .testTag("today_manage_goals_button")
+                shape = CircleShape,
+                color = MaterialTheme.colorScheme.surfaceContainerLowest,
+                modifier = Modifier.size(36.dp)
             ) {
-                Box(
-                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Text(
-                        text = if (goals.isEmpty()) "+ Set a goal" else "Manage",
-                        style = MaterialTheme.typography.labelMedium,
-                        color = MaterialTheme.colorScheme.onSurface
+                Box(contentAlignment = Alignment.Center) {
+                    Icon(
+                        imageVector = meta.icon,
+                        contentDescription = null,
+                        tint = meta.accent,
+                        modifier = Modifier.size(20.dp)
                     )
                 }
             }
+            Text(
+                text = "$totalCount",
+                fontFamily = PhoneticMonoFamily,
+                fontWeight = FontWeight.Bold,
+                style = MaterialTheme.typography.labelMedium,
+                color = meta.accent
+            )
         }
         Spacer(modifier = Modifier.height(10.dp))
-        if (goals.isEmpty()) {
+        Text(
+            text = meta.category.shortLabel,
+            style = MaterialTheme.typography.titleMedium,
+            color = MaterialTheme.colorScheme.onSurface,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis
+        )
+        Spacer(modifier = Modifier.height(4.dp))
+        Text(
+            text = "$studiedCount studied",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        Spacer(modifier = Modifier.height(8.dp))
+        EditorialProgressBar(
+            fraction = fraction,
+            fillColor = meta.accent,
+            trackColor = MaterialTheme.colorScheme.surfaceContainerLowest,
+            description = "${meta.category.label}: $studiedCount of $totalCount studied"
+        )
+        Spacer(modifier = Modifier.height(8.dp))
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(4.dp)
+        ) {
             Text(
-                text = "Set a daily or weekly target like 'Learn 5 new idioms' or 'Master 3 phrasal verbs' to personalize your daily path.",
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
+                text = "Study 5",
+                style = MaterialTheme.typography.labelMedium,
+                fontWeight = FontWeight.SemiBold,
+                color = meta.accent
             )
-        } else {
-            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                goals.take(2).forEach { g ->
-                    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Text(
-                                text = g.goal.title,
-                                style = MaterialTheme.typography.titleSmall,
-                                color = MaterialTheme.colorScheme.onSurface,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                                modifier = Modifier.weight(1f)
-                            )
-                            Spacer(modifier = Modifier.width(8.dp))
-                            Text(
-                                text = "${g.currentCount}/${g.targetCount}",
-                                fontFamily = PhoneticMonoFamily,
-                                style = MaterialTheme.typography.labelMedium,
-                                color = if (g.isCompleted) MaterialTheme.colorScheme.tertiary else MaterialTheme.colorScheme.primary
-                            )
-                        }
-                        EditorialProgressBar(
-                            fraction = g.fraction,
-                            fillColor = if (g.isCompleted) MaterialTheme.colorScheme.tertiary else MaterialTheme.colorScheme.primary,
-                            description = "${g.goal.title}: ${g.currentCount} of ${g.targetCount}"
-                        )
-                    }
-                }
+            Icon(
+                imageVector = Icons.AutoMirrored.Filled.ArrowForward,
+                contentDescription = null,
+                tint = meta.accent,
+                modifier = Modifier.size(14.dp)
+            )
+        }
+    }
+}
+
+@Composable
+private fun DailySpotlightCard(
+    entry: DailySpotlightEntry,
+    isSpeaking: Boolean,
+    isSlowAudio: Boolean,
+    onSpeak: () -> Unit,
+    onToggleSpeed: () -> Unit,
+    onCycleNext: () -> Unit
+) {
+    EditorialCard(
+        containerColor = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.65f),
+        borderColor = MaterialTheme.colorScheme.secondary.copy(alpha = 0.4f),
+        modifier = Modifier
+            .fillMaxWidth()
+            .testTag("daily_spotlight_card")
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                Icon(
+                    imageVector = Icons.Default.AutoAwesome,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.secondary,
+                    modifier = Modifier.size(18.dp)
+                )
+                Text(
+                    text = "WORD FOR TODAY • BONUS",
+                    fontFamily = PhoneticMonoFamily,
+                    fontWeight = FontWeight.Bold,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.secondary
+                )
+            }
+            Surface(
+                shape = RoundedCornerShape(8.dp),
+                color = MaterialTheme.colorScheme.surfaceContainerLowest
+            ) {
+                Text(
+                    text = "Not in Lessons",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                )
+            }
+        }
+
+        Spacer(modifier = Modifier.height(10.dp))
+
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.Bottom
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = entry.term,
+                    style = MaterialTheme.typography.headlineLarge,
+                    color = MaterialTheme.colorScheme.onSurface
+                )
+                Text(
+                    text = "${entry.ipa}  •  ${entry.partOfSpeech}  •  ${entry.tagline}",
+                    fontFamily = PhoneticMonoFamily,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSecondaryContainer
+                )
+            }
+        }
+
+        Spacer(modifier = Modifier.height(10.dp))
+        Text(
+            text = entry.definition,
+            style = MaterialTheme.typography.bodyLarge,
+            color = MaterialTheme.colorScheme.onSurface
+        )
+
+        Spacer(modifier = Modifier.height(10.dp))
+        Surface(
+            shape = RoundedCornerShape(12.dp),
+            color = MaterialTheme.colorScheme.surfaceContainerLowest,
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Text(
+                text = entry.example,
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurface,
+                modifier = Modifier.padding(12.dp)
+            )
+        }
+
+        Spacer(modifier = Modifier.height(10.dp))
+        Text(
+            text = "Why Americans love it: ${entry.funFact}",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSecondaryContainer
+        )
+
+        Spacer(modifier = Modifier.height(14.dp))
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            AudioListenButton(
+                isSpeaking = isSpeaking,
+                isSlow = isSlowAudio,
+                label = "Hear It",
+                onSpeakClick = onSpeak,
+                onToggleSpeed = onToggleSpeed
+            )
+            TextButton(
+                onClick = onCycleNext,
+                modifier = Modifier
+                    .heightIn(min = 48.dp)
+                    .testTag("spotlight_next_button")
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Refresh,
+                    contentDescription = null,
+                    modifier = Modifier.size(16.dp)
+                )
+                Spacer(modifier = Modifier.width(4.dp))
+                Text("Another Gem")
             }
         }
     }
@@ -478,8 +876,8 @@ fun PhraseListRowCard(
     onClick: () -> Unit,
     modifier: Modifier = Modifier
 ) {
-    val bookmarked = progress?.bookmarked == true
     EditorialCard(
+        containerColor = MaterialTheme.colorScheme.surfaceContainerLowest,
         onClick = onClick,
         modifier = modifier
             .fillMaxWidth()
@@ -488,31 +886,25 @@ fun PhraseListRowCard(
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Row(
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                modifier = Modifier.weight(1f)
-            ) {
-                EditorialTag(text = phrase.category.shortLabel)
-                EditorialTag(
-                    text = phrase.register.label,
-                    containerColor = MaterialTheme.colorScheme.surfaceContainerLow
-                )
-            }
-            MasteryBadge(
-                masteryLevel = progress?.masteryLevel?.toInt() ?: 0,
-                lessonCompleted = progress?.lessonCompleted == true
-            )
-        }
-        Spacer(modifier = Modifier.height(10.dp))
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.Top
         ) {
             Column(modifier = Modifier.weight(1f)) {
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    EditorialTag(
+                        text = phrase.category.shortLabel,
+                        containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.65f),
+                        contentColor = MaterialTheme.colorScheme.onPrimaryContainer
+                    )
+                    EditorialTag(text = phrase.cefrLevel.name)
+                    MasteryBadge(
+                        masteryLevel = (progress?.masteryLevel ?: 0L).toInt(),
+                        lessonCompleted = progress?.lessonCompleted == true
+                    )
+                }
+                Spacer(modifier = Modifier.height(8.dp))
                 Text(
                     text = phrase.term,
                     style = MaterialTheme.typography.titleLarge,
@@ -523,11 +915,11 @@ fun PhraseListRowCard(
                         text = phrase.ipa,
                         fontFamily = PhoneticMonoFamily,
                         style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                        color = MaterialTheme.colorScheme.primary
                     )
                 }
             }
-            Row {
+            Row(verticalAlignment = Alignment.CenterVertically) {
                 IconButton(
                     onClick = onSpeak,
                     modifier = Modifier.testTag("speak_button_${phrase.id}")
@@ -542,10 +934,11 @@ fun PhraseListRowCard(
                     onClick = onToggleBookmark,
                     modifier = Modifier.testTag("bookmark_button_${phrase.id}")
                 ) {
+                    val saved = progress?.bookmarked == true
                     Icon(
-                        imageVector = if (bookmarked) Icons.Default.Bookmark else Icons.Default.BookmarkBorder,
-                        contentDescription = if (bookmarked) "Remove bookmark" else "Save to lexicon",
-                        tint = if (bookmarked) MaterialTheme.colorScheme.secondary else MaterialTheme.colorScheme.onSurfaceVariant
+                        imageVector = if (saved) Icons.Default.Bookmark else Icons.Default.BookmarkBorder,
+                        contentDescription = if (saved) "Remove bookmark for ${phrase.term}" else "Save ${phrase.term}",
+                        tint = if (saved) MaterialTheme.colorScheme.secondary else MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
             }
@@ -558,15 +951,5 @@ fun PhraseListRowCard(
             maxLines = 2,
             overflow = TextOverflow.Ellipsis
         )
-        if ((progress?.missCount ?: 0L) > 0L) {
-            Spacer(modifier = Modifier.height(10.dp))
-            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
-            Spacer(modifier = Modifier.height(6.dp))
-            Text(
-                text = "Missed ${progress?.missCount} time(s) in quizzes • Review recommended",
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.secondary
-            )
-        }
     }
 }

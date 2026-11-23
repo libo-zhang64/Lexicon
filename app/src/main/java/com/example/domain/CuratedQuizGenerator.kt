@@ -1,5 +1,6 @@
 package com.example.domain
 
+import com.example.data.catalog.TransferQuizBank
 import com.example.data.model.CategoryFilter
 import com.example.data.model.PhraseEntry
 import com.example.data.model.PhraseProgressDoc
@@ -14,9 +15,17 @@ object CuratedQuizGenerator {
         progressMap: Map<String, PhraseProgressDoc>,
         categoryFilter: CategoryFilter = CategoryFilter.ALL,
         focusPhraseIds: List<String> = emptyList(),
-        questionCount: Int = 5
+        questionCount: Int = 5,
+        includeTransfer: Boolean = false
     ): List<QuizQuestion> {
         if (allPhrases.isEmpty()) return emptyList()
+
+        val transferQuestions = if (includeTransfer && questionCount >= 3) {
+            TransferQuizBank.pickQuestions(categoryFilter, count = 2)
+        } else {
+            emptyList()
+        }
+        val libraryCount = (questionCount - transferQuestions.size).coerceAtLeast(1)
 
         val filteredPool = allPhrases.filter { categoryFilter.matches(it.category) }
             .ifEmpty { allPhrases }
@@ -29,17 +38,42 @@ object CuratedQuizGenerator {
                 .thenByDescending { if (progressMap[it.id]?.bookmarked == true) 1 else 0 }
         )
 
-        val selected = prioritized.take(questionCount.coerceAtMost(filteredPool.size))
+        // Add subtle variety among equally-ranked unstudied entries so every session feels fresh
+        val topCandidates = prioritized.take((libraryCount * 3).coerceAtMost(filteredPool.size))
+        val selected = (prioritized.filter { it.id in focusSet || (progressMap[it.id]?.missCount ?: 0L) > 0L } +
+            topCandidates.shuffled())
+            .distinctBy { it.id }
+            .take(libraryCount.coerceAtMost(filteredPool.size))
+
         val typesCycle = listOf(
             QuizQuestionType.CLOZE,
             QuizQuestionType.REGISTER,
             QuizQuestionType.MEANING
         )
 
-        return selected.mapIndexed { index, target ->
+        val curatedQuestions = selected.mapIndexed { index, target ->
             val qType = typesCycle[index % typesCycle.size]
             buildQuestionForPhrase(target, allPhrases, qType, index)
         }
+
+        // Interleave transfer questions naturally into the practice session
+        if (transferQuestions.isEmpty()) return curatedQuestions
+        val merged = mutableListOf<QuizQuestion>()
+        var cIdx = 0
+        var tIdx = 0
+        while (cIdx < curatedQuestions.size || tIdx < transferQuestions.size) {
+            if (cIdx < curatedQuestions.size) merged.add(curatedQuestions[cIdx++])
+            if (cIdx < curatedQuestions.size) merged.add(curatedQuestions[cIdx++])
+            if (tIdx < transferQuestions.size) merged.add(transferQuestions[tIdx++])
+        }
+        return merged.take(questionCount)
+    }
+
+    fun buildTransferQuiz(
+        categoryFilter: CategoryFilter = CategoryFilter.ALL,
+        questionCount: Int = 5
+    ): List<QuizQuestion> {
+        return TransferQuizBank.pickQuestions(categoryFilter, count = questionCount)
     }
 
     fun buildSinglePhraseMiniQuiz(
@@ -59,11 +93,9 @@ object CuratedQuizGenerator {
         type: QuizQuestionType,
         idx: Int
     ): QuizQuestion {
-        val distractors = allPhrases
-            .filter { it.id != target.id }
-            .sortedByDescending { if (it.category == target.category) 1 else 0 }
-            .shuffled()
-            .take(3)
+        val sameCategory = allPhrases.filter { it.id != target.id && it.category == target.category }
+        val distractorPool = if (sameCategory.size >= 3) sameCategory else allPhrases.filter { it.id != target.id }
+        val distractors = distractorPool.shuffled().take(3)
 
         return when (type) {
             QuizQuestionType.CLOZE -> {
@@ -80,7 +112,8 @@ object CuratedQuizGenerator {
                     contextSnippet = clozeSnippet,
                     options = optionEntries.map { it.term },
                     correctIndex = correctIndex,
-                    explanation = "'${target.term}' means: ${target.definition} ${target.nuanceSummary}"
+                    explanation = "'${target.term}' means: ${target.definition} ${target.nuanceSummary}",
+                    isTransferQuestion = false
                 )
             }
 
@@ -98,7 +131,8 @@ object CuratedQuizGenerator {
                     contextSnippet = "\"$scenarioHint\"",
                     options = optionEntries.map { it.term },
                     correctIndex = correctIndex,
-                    explanation = "'${target.term}' (${target.register.label} • ${target.cefrLevel.name}): ${target.usageNotes.firstOrNull() ?: target.definition}"
+                    explanation = "'${target.term}' (${target.register.label} • ${target.cefrLevel.name}): ${target.usageNotes.firstOrNull() ?: target.definition}",
+                    isTransferQuestion = false
                 )
             }
 
@@ -116,7 +150,8 @@ object CuratedQuizGenerator {
                     contextSnippet = "Register: ${target.register.label} • ${target.category.label}",
                     options = optionDefs,
                     correctIndex = correctIndex,
-                    explanation = "${target.definition} $synHint".trim()
+                    explanation = "${target.definition} $synHint".trim(),
+                    isTransferQuestion = false
                 )
             }
         }
@@ -133,7 +168,9 @@ object CuratedQuizGenerator {
             if (baseTerm.isNotBlank() && masked.contains(baseTerm, ignoreCase = true)) {
                 masked = masked.replace(Regex(Regex.escape(baseTerm), RegexOption.IGNORE_CASE), "________")
             } else if (keywords.isNotEmpty()) {
-                val regexPattern = keywords.joinToString(".{0,18}") { Regex.escape(it.take(maxOf(3, it.length - 2))) + "[a-zA-Z'-]*" }
+                val regexPattern = keywords.joinToString(".{0,18}") {
+                    Regex.escape(it.take(maxOf(3, it.length - 2))) + "[a-zA-Z'-]*"
+                }
                 val match = Regex(regexPattern, RegexOption.IGNORE_CASE).find(masked)
                 if (match != null) {
                     masked = masked.replaceRange(match.range, "________")

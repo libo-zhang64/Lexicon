@@ -7,14 +7,16 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.MenuBook
-import androidx.compose.material.icons.automirrored.outlined.MenuBook
 import androidx.compose.material.icons.filled.Explore
 import androidx.compose.material.icons.filled.Quiz
+import androidx.compose.material.icons.filled.School
 import androidx.compose.material.icons.filled.TrackChanges
+import androidx.compose.material.icons.filled.UploadFile
 import androidx.compose.material.icons.outlined.Explore
 import androidx.compose.material.icons.outlined.Quiz
+import androidx.compose.material.icons.outlined.School
 import androidx.compose.material.icons.outlined.TrackChanges
+import androidx.compose.material.icons.outlined.UploadFile
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBar
@@ -64,11 +66,18 @@ private enum class LexiconTab(
     val unselectedIcon: ImageVector,
     val tag: String
 ) {
-    TODAY("Today", Icons.AutoMirrored.Filled.MenuBook, Icons.AutoMirrored.Outlined.MenuBook, "nav_today"),
+    TODAY("Learn", Icons.Default.School, Icons.Outlined.School, "nav_today"),
     EXPLORE("Explore", Icons.Default.Explore, Icons.Outlined.Explore, "nav_explore"),
+    EXTRACT("Extract", Icons.Default.UploadFile, Icons.Outlined.UploadFile, "nav_extract"),
     PRACTICE("Practice", Icons.Default.Quiz, Icons.Outlined.Quiz, "nav_practice"),
     PATH("Path", Icons.Default.TrackChanges, Icons.Outlined.TrackChanges, "nav_path")
 }
+
+private data class ActiveLearningSession(
+    val trackLabel: String,
+    val category: CategoryFilter,
+    val phrases: List<PhraseEntry>
+)
 
 @Composable
 fun LexiconAppRoot() {
@@ -109,7 +118,7 @@ private fun AuthenticatedLexiconShell(
 
     val lexiconViewModel: LexiconViewModel = viewModel(
         key = "lexicon_$currentUserId",
-        factory = LexiconViewModel.factory(firestoreRepo, aiRepo)
+        factory = LexiconViewModel.factory(context, firestoreRepo, aiRepo)
     )
     val quizViewModel: QuizViewModel = viewModel(
         key = "quiz_$currentUserId",
@@ -122,12 +131,14 @@ private fun AuthenticatedLexiconShell(
     }
 
     val lexiconState by lexiconViewModel.uiState.collectAsStateWithLifecycle()
+    val extractorState by lexiconViewModel.textExtractorState.collectAsStateWithLifecycle()
     val quizState by quizViewModel.uiState.collectAsStateWithLifecycle()
     val speakingItemId by pronunciationController.speakingItemId.collectAsStateWithLifecycle()
     val isSlowAudio by pronunciationController.isSlowSpeed.collectAsStateWithLifecycle()
 
     var selectedTab by rememberSaveable { mutableStateOf(LexiconTab.TODAY) }
     var activeDetailPhrase by remember { mutableStateOf<PhraseEntry?>(null) }
+    var activeLearningSession by remember { mutableStateOf<ActiveLearningSession?>(null) }
 
     val snackbarHostState = remember { SnackbarHostState() }
     LaunchedEffect(lexiconState.bannerMessage) {
@@ -155,6 +166,46 @@ private fun AuthenticatedLexiconShell(
                 )
             }
         }
+    }
+
+    val session = activeLearningSession
+    if (session != null) {
+        LearningSessionScreen(
+            trackLabel = session.trackLabel,
+            categoryFilter = session.category,
+            phrases = session.phrases,
+            progressMap = lexiconState.progressMap,
+            speakingItemId = speakingItemId,
+            isSlowAudio = isSlowAudio,
+            onSpeak = { itemId, text -> pronunciationController.speak(itemId, text) },
+            onToggleSpeed = { pronunciationController.toggleSpeed() },
+            onToggleBookmark = { lexiconViewModel.toggleBookmark(it) },
+            onCompletePhrase = { lexiconViewModel.markLessonCompleted(it, showBanner = false) },
+            onFinishSession = { lexiconViewModel.markSessionLessonsCompleted(it) },
+            onLaunchTransferQuiz = { category ->
+                pronunciationController.stop()
+                activeLearningSession = null
+                selectedTab = LexiconTab.PRACTICE
+                quizViewModel.startTransferQuiz(category)
+            },
+            onLaunchReviewQuiz = { studiedIds ->
+                pronunciationController.stop()
+                activeLearningSession = null
+                selectedTab = LexiconTab.PRACTICE
+                quizViewModel.startCuratedQuiz(
+                    mode = QuizMode.SMART_REVIEW,
+                    category = session.category,
+                    allPhrases = lexiconState.allPhrases,
+                    progressMap = lexiconState.progressMap,
+                    focusPhraseIds = studiedIds
+                )
+            },
+            onExit = {
+                pronunciationController.stop()
+                activeLearningSession = null
+            }
+        )
+        return
     }
 
     val detail = activeDetailPhrase
@@ -250,18 +301,25 @@ private fun AuthenticatedLexiconShell(
                         onSpeak = { itemId, text -> pronunciationController.speak(itemId, text) },
                         onToggleSpeed = { pronunciationController.toggleSpeed() },
                         onSelectCategory = { lexiconViewModel.selectCategory(it) },
+                        onStartLearningSession = { category ->
+                            val batch = lexiconViewModel.buildLearningBatch(category = category, count = 5)
+                            if (batch.isNotEmpty()) {
+                                activeLearningSession = ActiveLearningSession(
+                                    trackLabel = if (category == CategoryFilter.ALL) "Daily Guided Session" else "${category.label} Track",
+                                    category = category,
+                                    phrases = batch
+                                )
+                            }
+                        },
+                        onStartTransferChallenge = {
+                            selectedTab = LexiconTab.PRACTICE
+                            quizViewModel.startTransferQuiz(CategoryFilter.ALL)
+                        },
+                        onCycleSpotlight = { delta -> lexiconViewModel.cycleSpotlight(delta) },
                         onOpenPhrase = { activeDetailPhrase = it },
                         onToggleBookmark = { lexiconViewModel.toggleBookmark(it) },
-                        onQuickDailyQuiz = {
-                            selectedTab = LexiconTab.PRACTICE
-                            quizViewModel.startCuratedQuiz(
-                                mode = QuizMode.SMART_REVIEW,
-                                category = CategoryFilter.ALL,
-                                allPhrases = lexiconState.allPhrases,
-                                progressMap = lexiconState.progressMap,
-                                focusPhraseIds = lexiconState.insights.frequentMistakePhrases.map { it.phrase.id }
-                            )
-                        },
+                        onOpenExplore = { selectedTab = LexiconTab.EXPLORE },
+                        onOpenExtractor = { selectedTab = LexiconTab.EXTRACT },
                         onRecommendationClick = handleRecommendation,
                         onOpenGoalsTab = { selectedTab = LexiconTab.PATH },
                         modifier = Modifier.weight(1f)
@@ -281,6 +339,41 @@ private fun AuthenticatedLexiconShell(
                         modifier = Modifier.weight(1f)
                     )
 
+                    LexiconTab.EXTRACT -> TextExtractorScreen(
+                        state = extractorState,
+                        speakingItemId = speakingItemId,
+                        onTextChange = { lexiconViewModel.updateExtractorText(it) },
+                        onFileLoaded = { name, content -> lexiconViewModel.onExtractorFileLoaded(name, content) },
+                        onFileError = { lexiconViewModel.onExtractorFileError(it) },
+                        onSelectFocus = { lexiconViewModel.selectExtractionFocus(it) },
+                        onExtract = { lexiconViewModel.extractVocabularyFromCurrentText() },
+                        onClear = { lexiconViewModel.clearTextExtractor() },
+                        onSavePhrase = { lexiconViewModel.saveExtractedPhrase(it) },
+                        onSaveAll = { lexiconViewModel.saveAllExtractedPhrases() },
+                        onOpenPhrase = { activeDetailPhrase = it },
+                        onStudyExtracted = { extractedEntries ->
+                            if (extractedEntries.isNotEmpty()) {
+                                activeLearningSession = ActiveLearningSession(
+                                    trackLabel = extractorState.fileName ?: "Extracted Vocab Deck",
+                                    category = CategoryFilter.ALL,
+                                    phrases = extractedEntries
+                                )
+                            }
+                        },
+                        onQuizExtracted = { extractedEntries ->
+                            if (extractedEntries.isNotEmpty()) {
+                                selectedTab = LexiconTab.PRACTICE
+                                quizViewModel.startExtractedQuiz(
+                                    extractedPhrases = extractedEntries,
+                                    allPhrases = lexiconState.allPhrases,
+                                    progressMap = lexiconState.progressMap
+                                )
+                            }
+                        },
+                        onSpeak = { itemId, text -> pronunciationController.speak(itemId, text) },
+                        modifier = Modifier.weight(1f)
+                    )
+
                     LexiconTab.PRACTICE -> PracticeScreen(
                         lexiconState = lexiconState,
                         quizState = quizState,
@@ -294,6 +387,9 @@ private fun AuthenticatedLexiconShell(
                                 progressMap = lexiconState.progressMap,
                                 focusPhraseIds = focusIds
                             )
+                        },
+                        onStartTransferQuiz = { category ->
+                            quizViewModel.startTransferQuiz(category)
                         },
                         onStartAiQuiz = { topic, category ->
                             val weakTerms = lexiconState.insights.frequentMistakePhrases.map { it.phrase.term }

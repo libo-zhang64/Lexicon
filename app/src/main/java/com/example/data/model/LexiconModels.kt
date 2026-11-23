@@ -14,7 +14,8 @@ enum class PhraseCategory(val label: String, val shortLabel: String) {
     SLANG("Daily Slang", "Slang"),
     IDIOM("Idioms", "Idioms"),
     PHRASAL_VERB("Phrasal Verbs", "Phrasal Verbs"),
-    WORKPLACE("Workplace & Nuance", "Workplace");
+    WORKPLACE("Workplace & Nuance", "Workplace"),
+    GRE_VOCAB("GRE Vocabulary", "GRE");
 
     companion object {
         fun fromRaw(raw: String?): PhraseCategory =
@@ -27,7 +28,8 @@ enum class CategoryFilter(val label: String) {
     SLANG("Daily Slang"),
     IDIOM("Idioms"),
     PHRASAL_VERB("Phrasal Verbs"),
-    WORKPLACE("Workplace");
+    WORKPLACE("Workplace"),
+    GRE_VOCAB("GRE Words");
 
     fun matches(category: PhraseCategory): Boolean = when (this) {
         ALL -> true
@@ -35,6 +37,7 @@ enum class CategoryFilter(val label: String) {
         IDIOM -> category == PhraseCategory.IDIOM
         PHRASAL_VERB -> category == PhraseCategory.PHRASAL_VERB
         WORKPLACE -> category == PhraseCategory.WORKPLACE
+        GRE_VOCAB -> category == PhraseCategory.GRE_VOCAB
     }
 
     companion object {
@@ -46,6 +49,7 @@ enum class CategoryFilter(val label: String) {
             PhraseCategory.IDIOM -> IDIOM
             PhraseCategory.PHRASAL_VERB -> PHRASAL_VERB
             PhraseCategory.WORKPLACE -> WORKPLACE
+            PhraseCategory.GRE_VOCAB -> GRE_VOCAB
         }
     }
 }
@@ -103,6 +107,7 @@ enum class QuizMode(val label: String) {
     SMART_REVIEW("Smart Review"),
     GOAL_DRILL("Goal Drill"),
     CATEGORY_DRILL("Category Drill"),
+    TRANSFER_CHALLENGE("Transfer Challenge"),
     AI_CUSTOM("AI Scenario Quiz");
 
     companion object {
@@ -159,13 +164,33 @@ data class QuizQuestion(
     val contextSnippet: String?,
     val options: List<String>,
     val correctIndex: Int,
-    val explanation: String
+    val explanation: String,
+    val isTransferQuestion: Boolean = false
 )
 
 data class QuizAnswerRecord(
     val question: QuizQuestion,
     val selectedIndex: Int,
     val isCorrect: Boolean
+)
+
+enum class TextExtractionFocus(val label: String, val promptHint: String) {
+    BALANCED("All Strong Vocab", "Extract the highest-value mix of GRE-level words, idioms, phrasal verbs, and nuanced workplace phrases."),
+    GRE_ACADEMIC("GRE & Academic", "Prioritize advanced GRE-level academic vocabulary, precise verbs, and formal analytical words."),
+    IDIOMS_PHRASAL("Idioms & Phrasal", "Prioritize idiomatic expressions, figurative phrases, slang, and complex phrasal verbs."),
+    WORKPLACE("Workplace Nuance", "Prioritize executive communication, persuasive phrasing, and professional workplace vocabulary.")
+}
+
+data class ExtractedVocabItem(
+    val entry: PhraseEntry,
+    val sourceExcerpt: String,
+    val upgradeReason: String
+)
+
+data class TextExtractionResult(
+    val passageLevel: String,
+    val passageSummary: String,
+    val items: List<ExtractedVocabItem>
 )
 
 // --- Firestore Document Models (1:1 parity with firestore.rules) ---

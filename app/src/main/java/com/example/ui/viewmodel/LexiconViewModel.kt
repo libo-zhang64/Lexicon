@@ -1,9 +1,12 @@
 package com.example.ui.viewmodel
 
+import android.content.Context
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import com.example.data.catalog.CuratedCatalog
+import com.example.data.catalog.DailySpotlightCatalog
+import com.example.data.catalog.DailySpotlightEntry
 import com.example.data.firebase.AiLexiconRepository
 import com.example.data.firebase.LexiconFirestoreRepository
 import com.example.data.model.CategoryFilter
@@ -13,6 +16,8 @@ import com.example.data.model.LearningGoalDoc
 import com.example.data.model.PhraseEntry
 import com.example.data.model.PhraseProgressDoc
 import com.example.data.model.QuizSessionDoc
+import com.example.data.model.TextExtractionFocus
+import com.example.data.model.TextExtractionResult
 import com.example.data.model.UserProfileDoc
 import com.example.domain.AdaptivePathEngine
 import com.example.domain.LearningPathInsights
@@ -20,6 +25,7 @@ import com.google.firebase.Firebase
 import com.google.firebase.auth.auth
 import com.google.firebase.firestore.FirebaseFirestoreException
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -29,7 +35,9 @@ import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 sealed interface AiLookupState {
     data object Idle : AiLookupState
@@ -37,6 +45,22 @@ sealed interface AiLookupState {
     data class Success(val entry: PhraseEntry, val savedToLexicon: Boolean) : AiLookupState
     data class Error(val message: String, val lastQuery: String) : AiLookupState
 }
+
+sealed interface TextExtractionStatus {
+    data object Idle : TextExtractionStatus
+    data class Loading(val label: String) : TextExtractionStatus
+    data class Success(val result: TextExtractionResult) : TextExtractionStatus
+    data class Error(val message: String) : TextExtractionStatus
+}
+
+data class TextExtractorUiState(
+    val sourceText: String = "",
+    val fileName: String? = null,
+    val focus: TextExtractionFocus = TextExtractionFocus.BALANCED,
+    val status: TextExtractionStatus = TextExtractionStatus.Idle,
+    val savedPhraseIds: Set<String> = emptySet(),
+    val isSavingAll: Boolean = false
+)
 
 private sealed interface SyncEnvelope<out T> {
     data class Data<T>(val value: T) : SyncEnvelope<T>
@@ -49,7 +73,8 @@ data class LexiconUiState(
     val profile: UserProfileDoc = UserProfileDoc(),
     val allPhrases: List<PhraseEntry> = CuratedCatalog.entries,
     val customPhrases: List<PhraseEntry> = emptyList(),
-    val featuredPhrase: PhraseEntry = CuratedCatalog.phraseOfTheDay(),
+    val dailySpotlight: DailySpotlightEntry = DailySpotlightCatalog.spotlightForOffset(0),
+    val spotlightOffset: Int = 0,
     val progressMap: Map<String, PhraseProgressDoc> = emptyMap(),
     val goals: List<LearningGoalDoc> = emptyList(),
     val quizSessions: List<QuizSessionDoc> = emptyList(),
@@ -83,7 +108,7 @@ data class LexiconUiState(
         get() = allPhrases.filter { progressMap[it.id]?.bookmarked == true }
 }
 
-private fun <T> Flow<T>.wrapSyncErrors(fallback: T, label: String): Flow<SyncEnvelope<T>> =
+private fun <T> Flow<T>.wrapSyncErrors(label: String): Flow<SyncEnvelope<T>> =
     this.map<T, SyncEnvelope<T>> { SyncEnvelope.Data(it) }
         .catch { error ->
             val firestoreError = generateSequence(error) { it.cause }
@@ -95,47 +120,63 @@ private fun <T> Flow<T>.wrapSyncErrors(fallback: T, label: String): Flow<SyncEnv
         }
 
 class LexiconViewModel(
+    private val appContext: Context,
     private val firestoreRepo: LexiconFirestoreRepository,
     private val aiRepo: AiLexiconRepository
 ) : ViewModel() {
 
+    private val _catalogEntries = MutableStateFlow(CuratedCatalog.entries)
     private val _selectedCategory = MutableStateFlow(CategoryFilter.ALL)
     private val _searchQuery = MutableStateFlow("")
     private val _aiLookupState = MutableStateFlow<AiLookupState>(AiLookupState.Idle)
     private val _bannerMessage = MutableStateFlow<String?>(null)
+    private val _spotlightOffset = MutableStateFlow(0)
+    private val _textExtractorState = MutableStateFlow(TextExtractorUiState())
+    val textExtractorState: StateFlow<TextExtractorUiState> = _textExtractorState.asStateFlow()
 
     private val profileFlow = firestoreRepo.observeUserProfile()
-        .wrapSyncErrors(null, "profile")
+        .wrapSyncErrors("profile")
     private val goalsFlow = firestoreRepo.observeLearningGoals()
-        .wrapSyncErrors(emptyList(), "learning goals")
+        .wrapSyncErrors("learning goals")
     private val progressFlow = firestoreRepo.observePhraseProgress()
-        .wrapSyncErrors(emptyMap(), "phrase progress")
+        .wrapSyncErrors("phrase progress")
     private val customPhrasesFlow = firestoreRepo.observeCustomPhrases()
-        .wrapSyncErrors(emptyList(), "saved AI phrases")
+        .wrapSyncErrors("saved AI phrases")
     private val sessionsFlow = firestoreRepo.observeQuizSessions()
-        .wrapSyncErrors(emptyList(), "quiz sessions")
+        .wrapSyncErrors("quiz sessions")
 
-    private val syncedDataFlow = combine(
+    private val cloudRawFlow = combine(
         profileFlow,
         goalsFlow,
         progressFlow,
         customPhrasesFlow,
         sessionsFlow
     ) { profEnv, goalsEnv, progEnv, customEnv, sessEnv ->
-        val firstError = listOf(profEnv, goalsEnv, progEnv, customEnv, sessEnv)
-            .filterIsInstance<SyncEnvelope.Error>()
-            .firstOrNull()?.message
+        CloudRaw(profEnv, goalsEnv, progEnv, customEnv, sessEnv)
+    }
 
-        val profile = (profEnv as? SyncEnvelope.Data)?.value ?: UserProfileDoc(
+    private val syncedDataFlow = combine(
+        cloudRawFlow,
+        _catalogEntries
+    ) { cloud, curatedCatalog ->
+        val firstError = listOf(
+            cloud.profEnv,
+            cloud.goalsEnv,
+            cloud.progEnv,
+            cloud.customEnv,
+            cloud.sessEnv
+        ).filterIsInstance<SyncEnvelope.Error>().firstOrNull()?.message
+
+        val profile = (cloud.profEnv as? SyncEnvelope.Data)?.value ?: UserProfileDoc(
             displayName = Firebase.auth.currentUser?.displayName ?: "Learner"
         )
-        val goals = (goalsEnv as? SyncEnvelope.Data)?.value ?: emptyList()
-        val progress = (progEnv as? SyncEnvelope.Data)?.value ?: emptyMap()
-        val custom = (customEnv as? SyncEnvelope.Data)?.value ?: emptyList()
-        val sessions = (sessEnv as? SyncEnvelope.Data)?.value ?: emptyList()
+        val goals = (cloud.goalsEnv as? SyncEnvelope.Data)?.value ?: emptyList()
+        val progress = (cloud.progEnv as? SyncEnvelope.Data)?.value ?: emptyMap()
+        val custom = (cloud.customEnv as? SyncEnvelope.Data)?.value ?: emptyList()
+        val sessions = (cloud.sessEnv as? SyncEnvelope.Data)?.value ?: emptyList()
 
         val customIds = custom.map { it.id }.toSet()
-        val mergedPhrases = custom + CuratedCatalog.entries.filterNot { it.id in customIds }
+        val mergedPhrases = custom + curatedCatalog.filterNot { it.id in customIds }
         val insights = AdaptivePathEngine.computeInsights(
             allPhrases = mergedPhrases,
             goals = goals,
@@ -154,28 +195,36 @@ class LexiconViewModel(
         )
     }
 
-    val uiState: StateFlow<LexiconUiState> = combine(
-        syncedDataFlow,
+    private val uiControlsFlow = combine(
         _selectedCategory,
         _searchQuery,
         _aiLookupState,
-        _bannerMessage
-    ) { synced, category, query, aiState, banner ->
+        _bannerMessage,
+        _spotlightOffset
+    ) { category, query, aiState, banner, offset ->
+        UiControls(category, query, aiState, banner, offset)
+    }
+
+    val uiState: StateFlow<LexiconUiState> = combine(
+        syncedDataFlow,
+        uiControlsFlow
+    ) { synced, controls ->
         LexiconUiState(
             isLoading = false,
             syncError = synced.syncError,
             profile = synced.profile,
             allPhrases = synced.allPhrases,
             customPhrases = synced.customPhrases,
-            featuredPhrase = CuratedCatalog.phraseOfTheDay(CuratedCatalog.entries),
+            dailySpotlight = DailySpotlightCatalog.spotlightForOffset(controls.spotlightOffset),
+            spotlightOffset = controls.spotlightOffset,
             progressMap = synced.progressMap,
             goals = synced.goals,
             quizSessions = synced.sessions,
             insights = synced.insights,
-            selectedCategory = category,
-            searchQuery = query,
-            aiLookupState = aiState,
-            bannerMessage = banner
+            selectedCategory = controls.category,
+            searchQuery = controls.query,
+            aiLookupState = controls.aiState,
+            bannerMessage = controls.banner
         )
     }.stateIn(
         scope = viewModelScope,
@@ -184,6 +233,12 @@ class LexiconViewModel(
     )
 
     init {
+        viewModelScope.launch {
+            val loaded = withContext(Dispatchers.Default) {
+                CuratedCatalog.ensureLoaded(appContext)
+            }
+            _catalogEntries.value = loaded
+        }
         viewModelScope.launch {
             firestoreRepo.ensureUserProfile(Firebase.auth.currentUser?.displayName)
         }
@@ -197,8 +252,51 @@ class LexiconViewModel(
         _searchQuery.value = query
     }
 
+    fun cycleSpotlight(delta: Int) {
+        _spotlightOffset.value += delta
+    }
+
     fun dismissBanner() {
         _bannerMessage.value = null
+    }
+
+    fun buildLearningBatch(
+        category: CategoryFilter = CategoryFilter.ALL,
+        count: Int = 5
+    ): List<PhraseEntry> {
+        val state = uiState.value
+        val pool = state.allPhrases.filter { category.matches(it.category) }
+            .ifEmpty { state.allPhrases }
+
+        val unstudied = pool.filter { state.progressMap[it.id]?.lessonCompleted != true }
+        val needsReinforcement = pool.filter {
+            val p = state.progressMap[it.id]
+            p != null && p.lessonCompleted && (p.missCount > 0L || p.masteryLevel < 2L)
+        }
+
+        val ordered = if (unstudied.isNotEmpty()) {
+            // Mix next unstudied phrases across categories smoothly when ALL is selected
+            if (category == CategoryFilter.ALL) {
+                val grouped = unstudied.groupBy { it.category }.values.toList()
+                val interleaved = mutableListOf<PhraseEntry>()
+                var round = 0
+                while (interleaved.size < count && round < 10) {
+                    for (group in grouped) {
+                        if (round < group.size && interleaved.size < count) {
+                            interleaved.add(group[round])
+                        }
+                    }
+                    round++
+                }
+                interleaved
+            } else {
+                unstudied.take(count)
+            }
+        } else {
+            (needsReinforcement + pool.shuffled()).distinctBy { it.id }.take(count)
+        }
+
+        return ordered.take(count)
     }
 
     fun toggleBookmark(phrase: PhraseEntry) {
@@ -218,15 +316,31 @@ class LexiconViewModel(
         }
     }
 
-    fun markLessonCompleted(phrase: PhraseEntry) {
+    fun markLessonCompleted(phrase: PhraseEntry, showBanner: Boolean = true) {
         viewModelScope.launch {
             firestoreRepo.markLessonCompleted(phrase)
                 .onSuccess {
-                    _bannerMessage.value = "Lesson completed for '${phrase.term}'."
+                    if (showBanner) {
+                        _bannerMessage.value = "Lesson completed for '${phrase.term}'."
+                    }
                 }
                 .onFailure { e ->
                     _bannerMessage.value = e.localizedMessage ?: "Could not save lesson progress."
                 }
+        }
+    }
+
+    fun markSessionLessonsCompleted(entries: List<PhraseEntry>) {
+        if (entries.isEmpty()) return
+        viewModelScope.launch {
+            var completedNow = 0
+            for (phrase in entries) {
+                val result = firestoreRepo.markLessonCompleted(phrase)
+                if (result.isSuccess) completedNow++
+            }
+            if (completedNow > 0) {
+                _bannerMessage.value = "Session complete! Logged $completedNow lessons to your learning path."
+            }
         }
     }
 
@@ -277,6 +391,127 @@ class LexiconViewModel(
         }
     }
 
+    // --- Text Upload & Vocabulary Extractor ---
+
+    fun updateExtractorText(text: String) {
+        val capped = text.take(18_000)
+        _textExtractorState.update { it.copy(sourceText = capped) }
+    }
+
+    fun onExtractorFileLoaded(fileName: String, content: String) {
+        val capped = content.trim().take(18_000)
+        if (capped.isEmpty()) {
+            _textExtractorState.update {
+                it.copy(status = TextExtractionStatus.Error("The selected file appears to be empty. Please choose a text file with readable words."))
+            }
+            return
+        }
+        _textExtractorState.update {
+            it.copy(
+                fileName = fileName,
+                sourceText = capped,
+                status = TextExtractionStatus.Idle
+            )
+        }
+        _bannerMessage.value = "Loaded \"$fileName\" (${capped.length} characters)."
+    }
+
+    fun onExtractorFileError(message: String) {
+        _textExtractorState.update {
+            it.copy(status = TextExtractionStatus.Error(message))
+        }
+    }
+
+    fun selectExtractionFocus(focus: TextExtractionFocus) {
+        _textExtractorState.update { it.copy(focus = focus) }
+    }
+
+    fun clearTextExtractor() {
+        _textExtractorState.value = TextExtractorUiState()
+    }
+
+    fun extractVocabularyFromCurrentText() {
+        val current = _textExtractorState.value
+        val text = current.sourceText.trim()
+        if (text.length < 25) {
+            _textExtractorState.update {
+                it.copy(status = TextExtractionStatus.Error("Upload a text file or paste at least a short paragraph (25+ characters) to extract strong vocabulary."))
+            }
+            return
+        }
+
+        viewModelScope.launch {
+            val label = current.fileName?.let { "Analyzing \"$it\"..." } ?: "Analyzing your passage..."
+            _textExtractorState.update { it.copy(status = TextExtractionStatus.Loading(label)) }
+
+            aiRepo.extractVocabularyFromText(text, current.focus)
+                .onSuccess { result ->
+                    val existingSavedIds = uiState.value.customPhrases.map { it.id }.toSet()
+                    val matchedSaved = result.items.map { it.entry.id }.filter { it in existingSavedIds }.toSet()
+                    _textExtractorState.update {
+                        it.copy(
+                            status = TextExtractionStatus.Success(result),
+                            savedPhraseIds = it.savedPhraseIds + matchedSaved
+                        )
+                    }
+                }
+                .onFailure { err ->
+                    _textExtractorState.update {
+                        it.copy(
+                            status = TextExtractionStatus.Error(
+                                err.localizedMessage ?: "Could not extract vocabulary from this text. Please try again."
+                            )
+                        )
+                    }
+                }
+        }
+    }
+
+    fun saveExtractedPhrase(entry: PhraseEntry) {
+        viewModelScope.launch {
+            firestoreRepo.saveCustomPhrase(entry)
+                .onSuccess { saved ->
+                    _textExtractorState.update { it.copy(savedPhraseIds = it.savedPhraseIds + saved.id) }
+                    _bannerMessage.value = "Saved '${saved.term}' to your cloud lexicon."
+                }
+                .onFailure { err ->
+                    _bannerMessage.value = err.localizedMessage ?: "Could not save '${entry.term}'."
+                }
+        }
+    }
+
+    fun saveAllExtractedPhrases() {
+        val current = _textExtractorState.value
+        val success = current.status as? TextExtractionStatus.Success ?: return
+        val unsaved = success.result.items
+            .map { it.entry }
+            .filterNot { it.id in current.savedPhraseIds }
+        if (unsaved.isEmpty()) {
+            _bannerMessage.value = "All extracted vocabulary items are already in your lexicon."
+            return
+        }
+
+        viewModelScope.launch {
+            _textExtractorState.update { it.copy(isSavingAll = true) }
+            val newlySaved = mutableSetOf<String>()
+            for (entry in unsaved) {
+                firestoreRepo.saveCustomPhrase(entry)
+                    .onSuccess { saved -> newlySaved.add(saved.id) }
+            }
+            _textExtractorState.update {
+                it.copy(
+                    savedPhraseIds = it.savedPhraseIds + newlySaved,
+                    isSavingAll = false
+                )
+            }
+            if (newlySaved.isNotEmpty()) {
+                _bannerMessage.value = "Saved ${newlySaved.size} extracted words & phrases to your cloud lexicon."
+            } else {
+                _bannerMessage.value = "Could not save extracted vocabulary right now."
+            }
+        }
+    }
+
     fun createGoal(
         title: String,
         cadence: GoalCadence,
@@ -315,6 +550,22 @@ class LexiconViewModel(
         }
     }
 
+    private data class CloudRaw(
+        val profEnv: SyncEnvelope<UserProfileDoc?>,
+        val goalsEnv: SyncEnvelope<List<LearningGoalDoc>>,
+        val progEnv: SyncEnvelope<Map<String, PhraseProgressDoc>>,
+        val customEnv: SyncEnvelope<List<PhraseEntry>>,
+        val sessEnv: SyncEnvelope<List<QuizSessionDoc>>
+    )
+
+    private data class UiControls(
+        val category: CategoryFilter,
+        val query: String,
+        val aiState: AiLookupState,
+        val banner: String?,
+        val spotlightOffset: Int
+    )
+
     private data class SyncedSnapshot(
         val syncError: String?,
         val profile: UserProfileDoc,
@@ -328,12 +579,13 @@ class LexiconViewModel(
 
     companion object {
         fun factory(
+            context: Context,
             firestoreRepo: LexiconFirestoreRepository,
             aiRepo: AiLexiconRepository
         ): ViewModelProvider.Factory = object : ViewModelProvider.Factory {
             @Suppress("UNCHECKED_CAST")
             override fun <T : ViewModel> create(modelClass: Class<T>): T {
-                return LexiconViewModel(firestoreRepo, aiRepo) as T
+                return LexiconViewModel(context.applicationContext, firestoreRepo, aiRepo) as T
             }
         }
     }

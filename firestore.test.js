@@ -275,10 +275,26 @@ test("CustomPhrases & QuizSessions: owner operations succeed, quiz history is im
   await assertSucceeds(
     aliceDb.doc(`users/${ALICE_UID}/customPhrases/boil_the_ocean`).set(validCustomPhrasePayload(created))
   );
+  await assertSucceeds(
+    aliceDb.doc(`users/${ALICE_UID}/customPhrases/gre_extracted_word`).set({
+      ...validCustomPhrasePayload(created),
+      term: "perspicacious",
+      category: "GRE_VOCAB",
+      register: "FORMAL",
+    })
+  );
   await assertSucceeds(aliceDb.collection(`users/${ALICE_UID}/customPhrases`).get());
 
   await assertSucceeds(
     aliceDb.doc(`users/${ALICE_UID}/quizSessions/session_1`).set(validQuizSessionPayload(created))
+  );
+  await assertSucceeds(
+    aliceDb.doc(`users/${ALICE_UID}/quizSessions/session_transfer`).set({
+      ...validQuizSessionPayload(created),
+      mode: "TRANSFER_CHALLENGE",
+      category: "GRE_VOCAB",
+      missedPhraseIds: ["transfer_trenchant"],
+    })
   );
   await assertSucceeds(aliceDb.collection(`users/${ALICE_UID}/quizSessions`).get());
 

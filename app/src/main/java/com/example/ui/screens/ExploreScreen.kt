@@ -17,6 +17,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
@@ -29,6 +30,7 @@ import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -36,11 +38,17 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
+import com.example.data.model.CategoryFilter
 import com.example.data.model.PhraseEntry
 import com.example.ui.components.AudioListenButton
 import com.example.ui.components.EditorialCard
@@ -74,6 +82,12 @@ fun ExploreScreen(
     onToggleSpeed: () -> Unit,
     modifier: Modifier = Modifier
 ) {
+    var selectedFilter by rememberSaveable { mutableStateOf(CategoryFilter.ALL) }
+    var visibleCount by rememberSaveable(uiState.searchQuery, selectedFilter) { mutableIntStateOf(30) }
+
+    val matchingEntries = uiState.filteredSearchPhrases.filter { selectedFilter.matches(it.category) }
+    val displayedEntries = matchingEntries.take(visibleCount)
+
     Box(
         modifier = modifier.fillMaxSize(),
         contentAlignment = Alignment.TopCenter
@@ -87,7 +101,7 @@ fun ExploreScreen(
         ) {
             item(key = "explore_header") {
                 EditorialSectionHeader(
-                    eyebrow = "Search & AI Lexicographer",
+                    eyebrow = "Search ${uiState.allPhrases.size} Entries & AI Lexicographer",
                     title = "Explore American English"
                 )
             }
@@ -349,31 +363,45 @@ fun ExploreScreen(
                 }
             }
 
-            // Matching Library Entries
+            // Matching Library Entries + Category Filter Chips
             item(key = "results_header") {
-                EditorialSectionHeader(
-                    eyebrow = "${uiState.filteredSearchPhrases.size} entries",
-                    title = if (uiState.searchQuery.isBlank()) "Complete Library" else "Library Matches"
-                )
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    EditorialSectionHeader(
+                        eyebrow = "Showing ${displayedEntries.size} of ${matchingEntries.size} matching entries",
+                        title = if (uiState.searchQuery.isBlank()) "Complete B2–C2 Library" else "Library Matches"
+                    )
+                    LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        items(CategoryFilter.entries) { filter ->
+                            FilterChip(
+                                selected = selectedFilter == filter,
+                                onClick = { selectedFilter = filter },
+                                label = { Text(filter.label) },
+                                modifier = Modifier
+                                    .heightIn(min = 44.dp)
+                                    .testTag("explore_filter_${filter.name.lowercase()}")
+                            )
+                        }
+                    }
+                }
             }
 
-            if (uiState.filteredSearchPhrases.isEmpty()) {
+            if (matchingEntries.isEmpty()) {
                 item(key = "empty_search") {
                     EditorialCard(containerColor = MaterialTheme.colorScheme.surfaceContainerLow) {
                         Text(
-                            text = "No matching entry in your library yet.",
+                            text = "No matching entry in this filter yet.",
                             style = MaterialTheme.typography.titleSmall
                         )
                         Spacer(modifier = Modifier.height(4.dp))
                         Text(
-                            text = "Tap the button above to ask Gemini AI for a complete breakdown with dialogue, etymology, and usage notes.",
+                            text = "Switch to All Categories or tap the AI button above for a complete breakdown with dialogue, etymology, and usage notes.",
                             style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
                 }
             } else {
-                items(uiState.filteredSearchPhrases, key = { "search_${it.id}" }) { phrase ->
+                items(displayedEntries, key = { "search_${it.id}" }) { phrase ->
                     PhraseListRowCard(
                         phrase = phrase,
                         progress = uiState.progressMap[phrase.id],
@@ -382,6 +410,22 @@ fun ExploreScreen(
                         onToggleBookmark = { onToggleBookmark(phrase) },
                         onClick = { onOpenPhrase(phrase) }
                     )
+                }
+
+                if (displayedEntries.size < matchingEntries.size) {
+                    item(key = "explore_load_more") {
+                        val remaining = matchingEntries.size - displayedEntries.size
+                        OutlinedButton(
+                            onClick = { visibleCount += 30 },
+                            shape = RoundedCornerShape(12.dp),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .heightIn(min = 48.dp)
+                                .testTag("explore_load_more_button")
+                        ) {
+                            Text("Load More Expressions ($remaining remaining)")
+                        }
+                    }
                 }
             }
 
