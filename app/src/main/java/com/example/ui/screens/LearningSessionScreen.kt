@@ -79,7 +79,7 @@ fun LearningSessionScreen(
     onToggleBookmark: (PhraseEntry) -> Unit,
     onCompletePhrase: (PhraseEntry) -> Unit,
     onFinishSession: (List<PhraseEntry>) -> Unit,
-    onLaunchTransferQuiz: (CategoryFilter) -> Unit,
+    onLaunchTransferQuiz: (CategoryFilter, List<String>) -> Unit,
     onLaunchReviewQuiz: (List<String>) -> Unit,
     onExit: () -> Unit
 ) {
@@ -482,7 +482,7 @@ private fun SessionCompleteView(
     trackLabel: String,
     categoryFilter: CategoryFilter,
     phrases: List<PhraseEntry>,
-    onLaunchTransferQuiz: (CategoryFilter) -> Unit,
+    onLaunchTransferQuiz: (CategoryFilter, List<String>) -> Unit,
     onLaunchReviewQuiz: (List<String>) -> Unit,
     onDone: () -> Unit
 ) {
@@ -535,7 +535,7 @@ private fun SessionCompleteView(
                 }
                 Spacer(modifier = Modifier.height(10.dp))
                 Text(
-                    text = "Great momentum on $trackLabel. Reinforce what you learned with a quick review quiz—or stretch into unseen expressions with a Transfer Challenge.",
+                    text = "Great momentum on $trackLabel. These expressions are now enrolled in your Ebbinghaus review schedule. Quiz them now or test them inside brand-new conversations with Transfer Learning.",
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onTertiaryContainer
                 )
@@ -604,7 +604,7 @@ private fun SessionCompleteView(
                 }
 
                 Button(
-                    onClick = { onLaunchTransferQuiz(categoryFilter) },
+                    onClick = { onLaunchTransferQuiz(categoryFilter, phrases.map { it.id }) },
                     colors = ButtonDefaults.buttonColors(
                         containerColor = MaterialTheme.colorScheme.secondary,
                         contentColor = MaterialTheme.colorScheme.onSecondary
@@ -617,7 +617,7 @@ private fun SessionCompleteView(
                 ) {
                     Icon(imageVector = Icons.Default.Explore, contentDescription = null, modifier = Modifier.size(18.dp))
                     Spacer(modifier = Modifier.width(8.dp))
-                    Text("Try Transfer Challenge (Unseen Phrases)")
+                    Text("Transfer Quiz (New Contexts)")
                 }
 
                 OutlinedButton(

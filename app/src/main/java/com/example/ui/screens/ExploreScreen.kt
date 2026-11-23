@@ -23,10 +23,12 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.BookmarkAdded
 import androidx.compose.material.icons.filled.Clear
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.UploadFile
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
@@ -78,6 +80,7 @@ fun ExploreScreen(
     onSaveAiPhrase: (PhraseEntry) -> Unit,
     onOpenPhrase: (PhraseEntry) -> Unit,
     onToggleBookmark: (PhraseEntry) -> Unit,
+    onOpenExtractor: () -> Unit,
     onSpeak: (itemId: String, text: String) -> Unit,
     onToggleSpeed: () -> Unit,
     modifier: Modifier = Modifier
@@ -104,6 +107,47 @@ fun ExploreScreen(
                     eyebrow = "Search ${uiState.allPhrases.size} Entries & AI Lexicographer",
                     title = "Explore American English"
                 )
+            }
+
+            item(key = "explore_extractor_shortcut") {
+                EditorialCard(
+                    containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.4f),
+                    borderColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.3f),
+                    onClick = onOpenExtractor,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("explore_open_extractor_button")
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(12.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.UploadFile,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.size(22.dp)
+                        )
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = "Upload Text & Extract Vocab",
+                                style = MaterialTheme.typography.titleSmall,
+                                color = MaterialTheme.colorScheme.onSurface
+                            )
+                            Text(
+                                text = "Paste an article or upload .txt/.md to pull GRE words & idioms.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        Icon(
+                            imageVector = Icons.AutoMirrored.Filled.ArrowForward,
+                            contentDescription = "Open Text Extractor",
+                            tint = MaterialTheme.colorScheme.primary
+                        )
+                    }
+                }
             }
 
             // Search + AI Lookup Field
@@ -219,11 +263,15 @@ fun ExploreScreen(
                                 )
                                 Column {
                                     Text(
-                                        text = "Analyzing \"${aiState.query}\"...",
+                                        text = aiState.statusText,
                                         style = MaterialTheme.typography.titleSmall
                                     )
                                     Text(
-                                        text = "Drafting real-world US dialogue, etymology, synonyms, and usage notes.",
+                                        text = if (aiState.receivedChars > 0) {
+                                            "Streaming live (${aiState.receivedChars} chars)..."
+                                        } else {
+                                            "Drafting real-world US dialogue, etymology, synonyms, and usage notes."
+                                        },
                                         style = MaterialTheme.typography.bodySmall,
                                         color = MaterialTheme.colorScheme.onSurfaceVariant
                                     )

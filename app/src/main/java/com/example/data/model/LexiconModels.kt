@@ -108,12 +108,20 @@ enum class QuizMode(val label: String) {
     GOAL_DRILL("Goal Drill"),
     CATEGORY_DRILL("Category Drill"),
     TRANSFER_CHALLENGE("Transfer Challenge"),
-    AI_CUSTOM("AI Scenario Quiz");
+    AI_CUSTOM("AI Scenario Quiz"),
+    EBBINGHAUS_REVIEW("Ebbinghaus Review");
 
     companion object {
         fun fromRaw(raw: String?): QuizMode =
             entries.firstOrNull { it.name == raw } ?: SMART_REVIEW
     }
+}
+
+enum class RecallRating(val label: String, val hint: String) {
+    FORGOT("Forgot", "Reset • Again soon"),
+    HARD("Hard", "Reinforce • Shorter gap"),
+    GOOD("Good", "Advance • Next step"),
+    EASY("Easy", "Strong • Jump ahead")
 }
 
 enum class QuizQuestionType(val label: String) {
@@ -165,7 +173,8 @@ data class QuizQuestion(
     val options: List<String>,
     val correctIndex: Int,
     val explanation: String,
-    val isTransferQuestion: Boolean = false
+    val isTransferQuestion: Boolean = false,
+    val transferDomainLabel: String? = null
 )
 
 data class QuizAnswerRecord(
@@ -249,6 +258,12 @@ data class PhraseProgressDoc(
     val missedRegisterCount: Long = 0L,
     val missedMeaningCount: Long = 0L,
     val lastReviewedDay: String = "",
+    val ebbinghausStage: Long = 0L,
+    val nextReviewAtMillis: Long = 0L,
+    val lastReviewAtMillis: Long = 0L,
+    val intervalDays: Long = 0L,
+    val reviewCount: Long = 0L,
+    val lapseCount: Long = 0L,
     @ServerTimestamp val createdAt: Timestamp? = null,
     @ServerTimestamp val updatedAt: Timestamp? = null
 ) {

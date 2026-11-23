@@ -26,6 +26,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.automirrored.filled.VolumeUp
 import androidx.compose.material.icons.filled.AutoAwesome
+import androidx.compose.material.icons.filled.AutoGraph
 import androidx.compose.material.icons.filled.AutoStories
 import androidx.compose.material.icons.filled.Bookmark
 import androidx.compose.material.icons.filled.BookmarkBorder
@@ -96,6 +97,7 @@ fun TodayScreen(
     onToggleBookmark: (PhraseEntry) -> Unit,
     onOpenExplore: () -> Unit,
     onOpenExtractor: () -> Unit,
+    onOpenReviewTab: () -> Unit,
     onRecommendationClick: (ReviewRecommendation) -> Unit,
     onOpenGoalsTab: () -> Unit,
     modifier: Modifier = Modifier
@@ -181,6 +183,65 @@ fun TodayScreen(
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onErrorContainer
                         )
+                    }
+                }
+            }
+
+            // 1b. EBBINGHAUS DUE-FOR-REVIEW BANNER (Always prominent when old words are due!)
+            val ebbinghaus = uiState.ebbinghaus
+            if (ebbinghaus.dueNowCount > 0) {
+                item(key = "ebbinghaus_due_banner") {
+                    EditorialCard(
+                        containerColor = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.85f),
+                        borderColor = MaterialTheme.colorScheme.secondary.copy(alpha = 0.45f),
+                        onClick = onOpenReviewTab,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("today_ebbinghaus_due_banner")
+                    ) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(12.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Surface(
+                                shape = RoundedCornerShape(12.dp),
+                                color = MaterialTheme.colorScheme.secondary,
+                                modifier = Modifier.size(44.dp)
+                            ) {
+                                Box(contentAlignment = Alignment.Center) {
+                                    Icon(
+                                        imageVector = Icons.Default.AutoGraph,
+                                        contentDescription = null,
+                                        tint = MaterialTheme.colorScheme.onSecondary,
+                                        modifier = Modifier.size(22.dp)
+                                    )
+                                }
+                            }
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = "FORGETTING CURVE • ${ebbinghaus.averageRetentionPercent}% AVG RECALL",
+                                    fontFamily = PhoneticMonoFamily,
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.secondary
+                                )
+                                Text(
+                                    text = "${ebbinghaus.dueNowCount} learned word${if (ebbinghaus.dueNowCount == 1) "" else "s"} due for review",
+                                    style = MaterialTheme.typography.titleMedium,
+                                    color = MaterialTheme.colorScheme.onSecondaryContainer
+                                )
+                                Text(
+                                    text = "Tap to reinforce via Active Recall Quiz or Flashcards.",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSecondaryContainer.copy(alpha = 0.85f)
+                                )
+                            }
+                            Icon(
+                                imageVector = Icons.AutoMirrored.Filled.ArrowForward,
+                                contentDescription = "Open Ebbinghaus Review",
+                                tint = MaterialTheme.colorScheme.secondary
+                            )
+                        }
                     }
                 }
             }

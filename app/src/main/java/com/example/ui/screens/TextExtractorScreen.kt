@@ -3,6 +3,7 @@ package com.example.ui.screens
 import android.content.Context
 import android.net.Uri
 import android.provider.OpenableColumns
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.BorderStroke
@@ -26,6 +27,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.VolumeUp
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.BookmarkAdded
@@ -86,8 +88,13 @@ fun TextExtractorScreen(
     onStudyExtracted: (List<PhraseEntry>) -> Unit,
     onQuizExtracted: (List<PhraseEntry>) -> Unit,
     onSpeak: (itemId: String, text: String) -> Unit,
+    onBack: (() -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
+    if (onBack != null) {
+        BackHandler(onBack = onBack)
+    }
+
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
 
@@ -126,10 +133,35 @@ fun TextExtractorScreen(
             verticalArrangement = Arrangement.spacedBy(18.dp)
         ) {
             item(key = "extractor_header") {
-                EditorialSectionHeader(
-                    eyebrow = "Vocabulary Lab • Text Analyzer",
-                    title = "Upload & Extract Vocab"
-                )
+                if (onBack != null) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        IconButton(
+                            onClick = onBack,
+                            modifier = Modifier
+                                .size(48.dp)
+                                .testTag("extract_back_button")
+                        ) {
+                            Icon(
+                                imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                                contentDescription = "Back"
+                            )
+                        }
+                        EditorialSectionHeader(
+                            eyebrow = "Vocabulary Lab • Text Analyzer",
+                            title = "Upload & Extract Vocab",
+                            modifier = Modifier.weight(1f)
+                        )
+                    }
+                } else {
+                    EditorialSectionHeader(
+                        eyebrow = "Vocabulary Lab • Text Analyzer",
+                        title = "Upload & Extract Vocab"
+                    )
+                }
             }
 
             // Upload + Paste Card
@@ -316,7 +348,9 @@ fun TextExtractorScreen(
                     item(key = "extract_loading") {
                         EditorialCard(
                             containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.45f),
-                            modifier = Modifier.fillMaxWidth()
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .testTag("extract_loading_card")
                         ) {
                             Row(
                                 verticalAlignment = Alignment.CenterVertically,
@@ -326,7 +360,7 @@ fun TextExtractorScreen(
                                     modifier = Modifier.size(26.dp),
                                     strokeWidth = 3.dp
                                 )
-                                Column {
+                                Column(modifier = Modifier.weight(1f)) {
                                     Text(
                                         text = status.label,
                                         style = MaterialTheme.typography.titleSmall,
@@ -334,10 +368,18 @@ fun TextExtractorScreen(
                                     )
                                     Spacer(modifier = Modifier.height(2.dp))
                                     Text(
-                                        text = "Identifying GRE-level words, idioms, phrasal verbs, and nuanced phrases with exact quotes from your text...",
+                                        text = status.detail,
                                         style = MaterialTheme.typography.bodySmall,
                                         color = MaterialTheme.colorScheme.onSurfaceVariant
                                     )
+                                    if (status.receivedChars > 0) {
+                                        Spacer(modifier = Modifier.height(8.dp))
+                                        EditorialTag(
+                                            text = "Streaming live • ${status.receivedChars} chars",
+                                            containerColor = MaterialTheme.colorScheme.primaryContainer,
+                                            contentColor = MaterialTheme.colorScheme.onPrimaryContainer
+                                        )
+                                    }
                                 }
                             }
                         }

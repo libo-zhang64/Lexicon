@@ -15,8 +15,11 @@ import com.example.data.model.QuizAnswerRecord
 import com.example.data.model.QuizMode
 import com.example.data.model.QuizQuestionType
 import com.example.data.model.QuizSessionDoc
+import com.example.data.model.RecallRating
 import com.example.data.model.UserProfileDoc
 import com.example.data.model.sanitizePhraseId
+import com.example.domain.EbbinghausScheduleUpdate
+import com.example.domain.EbbinghausScheduler
 import com.google.firebase.Firebase
 import com.google.firebase.auth.auth
 import com.google.firebase.firestore.DocumentSnapshot
@@ -308,6 +311,8 @@ class LexiconFirestoreRepository(private val db: FirebaseFirestore) {
             val uid = requireUserId()
             val today = PeriodKeys.todayDayKey()
             val week = PeriodKeys.currentWeekKey()
+            val nowMs = System.currentTimeMillis()
+            val initialSchedule = EbbinghausScheduler.initialEnrollment(nowMs)
             val progressRef = db.collection("users").document(uid).collection("phraseProgress").document(phrase.id)
             path = progressRef.path
 
@@ -321,7 +326,11 @@ class LexiconFirestoreRepository(private val db: FirebaseFirestore) {
                         lessonCompletedDay = today,
                         lessonCompletedWeek = week,
                         masteryLevel = 1L,
-                        lastReviewedDay = today
+                        lastReviewedDay = today,
+                        ebbinghausStage = initialSchedule.stage,
+                        nextReviewAtMillis = initialSchedule.nextReviewAtMillis,
+                        lastReviewAtMillis = initialSchedule.lastReviewAtMillis,
+                        intervalDays = initialSchedule.intervalDays
                     )
                 ).await()
                 false
@@ -329,16 +338,22 @@ class LexiconFirestoreRepository(private val db: FirebaseFirestore) {
                 val existing = snap.toObject(PhraseProgressDoc::class.java)
                 val alreadyDone = existing?.lessonCompleted == true
                 val newMastery = maxOf(existing?.masteryLevel ?: 0L, 1L).coerceIn(0L, 3L)
-                progressRef.update(
-                    mapOf(
-                        "lessonCompleted" to true,
-                        "lessonCompletedDay" to (existing?.lessonCompletedDay?.takeIf { it.isNotBlank() } ?: today),
-                        "lessonCompletedWeek" to (existing?.lessonCompletedWeek?.takeIf { it.isNotBlank() } ?: week),
-                        "masteryLevel" to newMastery,
-                        "lastReviewedDay" to today,
-                        "updatedAt" to FieldValue.serverTimestamp()
-                    )
-                ).await()
+                val needsSchedule = (existing?.nextReviewAtMillis ?: 0L) <= 0L
+                val updateMap = mutableMapOf<String, Any>(
+                    "lessonCompleted" to true,
+                    "lessonCompletedDay" to (existing?.lessonCompletedDay?.takeIf { it.isNotBlank() } ?: today),
+                    "lessonCompletedWeek" to (existing?.lessonCompletedWeek?.takeIf { it.isNotBlank() } ?: week),
+                    "masteryLevel" to newMastery,
+                    "lastReviewedDay" to today,
+                    "updatedAt" to FieldValue.serverTimestamp()
+                )
+                if (needsSchedule) {
+                    updateMap["ebbinghausStage"] = initialSchedule.stage
+                    updateMap["nextReviewAtMillis"] = initialSchedule.nextReviewAtMillis
+                    updateMap["lastReviewAtMillis"] = initialSchedule.lastReviewAtMillis
+                    updateMap["intervalDays"] = initialSchedule.intervalDays
+                }
+                progressRef.update(updateMap).await()
                 alreadyDone
             }
 
@@ -350,6 +365,108 @@ class LexiconFirestoreRepository(private val db: FirebaseFirestore) {
                 addedQuestions = 0L
             )
             Result.success(Unit)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            handleFirestoreError(e, OperationType.WRITE, path)
+            Result.failure(e)
+        }
+    }
+
+    suspend fun recordFlashcardReview(
+        phrase: PhraseEntry,
+        rating: RecallRating
+    ): Result<EbbinghausScheduleUpdate> {
+        var path = "users/unknown/phraseProgress/${phrase.id}"
+        return try {
+            val uid = requireUserId()
+            val today = PeriodKeys.todayDayKey()
+            val week = PeriodKeys.currentWeekKey()
+            val nowMs = System.currentTimeMillis()
+            val progressRef = db.collection("users").document(uid).collection("phraseProgress").document(phrase.id)
+            path = progressRef.path
+
+            val snap = progressRef.get().await()
+            val existing = snap.toObject(PhraseProgressDoc::class.java)
+            val schedule = EbbinghausScheduler.computeNextSchedule(existing, rating, nowMs)
+
+            val isSuccess = rating != RecallRating.FORGOT
+            val prevConsecutive = existing?.consecutiveCorrect ?: 0L
+            val newConsecutive = if (isSuccess) prevConsecutive + 1L else 0L
+            val prevMastery = existing?.masteryLevel ?: 0L
+            val newMastery = when {
+                !isSuccess -> maxOf(1L, prevMastery - 1L)
+                schedule.stage >= 3L || newConsecutive >= 2L -> 3L
+                else -> maxOf(prevMastery, 2L)
+            }.coerceIn(0L, 3L)
+
+            val reachedMasteryNow = newMastery == 3L && prevMastery < 3L
+            val masteredDay = when {
+                reachedMasteryNow -> today
+                newMastery == 3L -> existing?.masteredDay.orEmpty()
+                else -> ""
+            }
+            val masteredWeek = when {
+                reachedMasteryNow -> week
+                newMastery == 3L -> existing?.masteredWeek.orEmpty()
+                else -> ""
+            }
+
+            if (!snap.exists()) {
+                progressRef.set(
+                    buildInitialProgressPayload(
+                        phraseId = phrase.id,
+                        category = phrase.category,
+                        lessonCompleted = true,
+                        lessonCompletedDay = today,
+                        lessonCompletedWeek = week,
+                        masteryLevel = newMastery,
+                        lastReviewedDay = today,
+                        ebbinghausStage = schedule.stage,
+                        nextReviewAtMillis = schedule.nextReviewAtMillis,
+                        lastReviewAtMillis = schedule.lastReviewAtMillis,
+                        intervalDays = schedule.intervalDays,
+                        reviewCount = schedule.reviewCount,
+                        lapseCount = schedule.lapseCount
+                    ) + mapOf(
+                        "masteredDay" to masteredDay,
+                        "masteredWeek" to masteredWeek,
+                        "correctCount" to (if (isSuccess) 1L else 0L),
+                        "attemptCount" to 1L,
+                        "missCount" to (if (isSuccess) 0L else 1L),
+                        "consecutiveCorrect" to newConsecutive
+                    )
+                ).await()
+            } else {
+                progressRef.update(
+                    mapOf(
+                        "masteryLevel" to newMastery,
+                        "masteredDay" to masteredDay,
+                        "masteredWeek" to masteredWeek,
+                        "correctCount" to ((existing?.correctCount ?: 0L) + if (isSuccess) 1L else 0L),
+                        "attemptCount" to ((existing?.attemptCount ?: 0L) + 1L),
+                        "missCount" to ((existing?.missCount ?: 0L) + if (isSuccess) 0L else 1L),
+                        "consecutiveCorrect" to newConsecutive,
+                        "lastReviewedDay" to today,
+                        "ebbinghausStage" to schedule.stage,
+                        "nextReviewAtMillis" to schedule.nextReviewAtMillis,
+                        "lastReviewAtMillis" to schedule.lastReviewAtMillis,
+                        "intervalDays" to schedule.intervalDays,
+                        "reviewCount" to schedule.reviewCount,
+                        "lapseCount" to schedule.lapseCount,
+                        "updatedAt" to FieldValue.serverTimestamp()
+                    )
+                ).await()
+            }
+
+            updateUserProfilePractice(
+                uid = uid,
+                addedLessons = 0L,
+                addedQuizzes = 0L,
+                addedCorrect = if (isSuccess) 1L else 0L,
+                addedQuestions = 1L
+            )
+            Result.success(schedule)
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
@@ -520,6 +637,10 @@ class LexiconFirestoreRepository(private val db: FirebaseFirestore) {
                     else -> ""
                 }
 
+                val nowMs = System.currentTimeMillis()
+                val rating = if (addedMisses > 0L) RecallRating.FORGOT else RecallRating.GOOD
+                val schedule = EbbinghausScheduler.computeNextSchedule(existing, rating, nowMs)
+
                 if (!snap.exists()) {
                     pRef.set(
                         mapOf(
@@ -540,6 +661,12 @@ class LexiconFirestoreRepository(private val db: FirebaseFirestore) {
                             "missedRegisterCount" to addedRegisterMiss,
                             "missedMeaningCount" to addedMeaningMiss,
                             "lastReviewedDay" to today,
+                            "ebbinghausStage" to schedule.stage,
+                            "nextReviewAtMillis" to schedule.nextReviewAtMillis,
+                            "lastReviewAtMillis" to schedule.lastReviewAtMillis,
+                            "intervalDays" to schedule.intervalDays,
+                            "reviewCount" to schedule.reviewCount,
+                            "lapseCount" to schedule.lapseCount,
                             "createdAt" to FieldValue.serverTimestamp(),
                             "updatedAt" to FieldValue.serverTimestamp()
                         )
@@ -558,6 +685,12 @@ class LexiconFirestoreRepository(private val db: FirebaseFirestore) {
                             "missedRegisterCount" to ((existing?.missedRegisterCount ?: 0L) + addedRegisterMiss),
                             "missedMeaningCount" to ((existing?.missedMeaningCount ?: 0L) + addedMeaningMiss),
                             "lastReviewedDay" to today,
+                            "ebbinghausStage" to schedule.stage,
+                            "nextReviewAtMillis" to schedule.nextReviewAtMillis,
+                            "lastReviewAtMillis" to schedule.lastReviewAtMillis,
+                            "intervalDays" to schedule.intervalDays,
+                            "reviewCount" to schedule.reviewCount,
+                            "lapseCount" to schedule.lapseCount,
                             "updatedAt" to FieldValue.serverTimestamp()
                         )
                     ).await()
@@ -649,7 +782,13 @@ class LexiconFirestoreRepository(private val db: FirebaseFirestore) {
         lessonCompletedDay: String = "",
         lessonCompletedWeek: String = "",
         masteryLevel: Long = 0L,
-        lastReviewedDay: String = ""
+        lastReviewedDay: String = "",
+        ebbinghausStage: Long = 0L,
+        nextReviewAtMillis: Long = 0L,
+        lastReviewAtMillis: Long = 0L,
+        intervalDays: Long = 0L,
+        reviewCount: Long = 0L,
+        lapseCount: Long = 0L
     ): Map<String, Any> = mapOf(
         "phraseId" to phraseId,
         "category" to category.name,
@@ -668,6 +807,12 @@ class LexiconFirestoreRepository(private val db: FirebaseFirestore) {
         "missedRegisterCount" to 0L,
         "missedMeaningCount" to 0L,
         "lastReviewedDay" to lastReviewedDay,
+        "ebbinghausStage" to ebbinghausStage,
+        "nextReviewAtMillis" to nextReviewAtMillis,
+        "lastReviewAtMillis" to lastReviewAtMillis,
+        "intervalDays" to intervalDays,
+        "reviewCount" to reviewCount,
+        "lapseCount" to lapseCount,
         "createdAt" to FieldValue.serverTimestamp(),
         "updatedAt" to FieldValue.serverTimestamp()
     )

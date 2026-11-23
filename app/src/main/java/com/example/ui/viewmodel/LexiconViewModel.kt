@@ -16,10 +16,13 @@ import com.example.data.model.LearningGoalDoc
 import com.example.data.model.PhraseEntry
 import com.example.data.model.PhraseProgressDoc
 import com.example.data.model.QuizSessionDoc
+import com.example.data.model.RecallRating
 import com.example.data.model.TextExtractionFocus
 import com.example.data.model.TextExtractionResult
 import com.example.data.model.UserProfileDoc
 import com.example.domain.AdaptivePathEngine
+import com.example.domain.EbbinghausDashboard
+import com.example.domain.EbbinghausScheduler
 import com.example.domain.LearningPathInsights
 import com.google.firebase.Firebase
 import com.google.firebase.auth.auth
@@ -41,14 +44,22 @@ import kotlinx.coroutines.withContext
 
 sealed interface AiLookupState {
     data object Idle : AiLookupState
-    data class Loading(val query: String) : AiLookupState
+    data class Loading(
+        val query: String,
+        val statusText: String = "Connecting to Gemini 3.8 Flash...",
+        val receivedChars: Int = 0
+    ) : AiLookupState
     data class Success(val entry: PhraseEntry, val savedToLexicon: Boolean) : AiLookupState
     data class Error(val message: String, val lastQuery: String) : AiLookupState
 }
 
 sealed interface TextExtractionStatus {
     data object Idle : TextExtractionStatus
-    data class Loading(val label: String) : TextExtractionStatus
+    data class Loading(
+        val label: String,
+        val detail: String = "Streaming analysis from Gemini 3.8 Flash...",
+        val receivedChars: Int = 0
+    ) : TextExtractionStatus
     data class Success(val result: TextExtractionResult) : TextExtractionStatus
     data class Error(val message: String) : TextExtractionStatus
 }
@@ -84,6 +95,10 @@ data class LexiconUiState(
         progressMap = emptyMap(),
         sessions = emptyList()
     ),
+    val ebbinghaus: EbbinghausDashboard = EbbinghausScheduler.computeDashboard(
+        allPhrases = CuratedCatalog.entries,
+        progressMap = emptyMap()
+    ),
     val selectedCategory: CategoryFilter = CategoryFilter.ALL,
     val searchQuery: String = "",
     val aiLookupState: AiLookupState = AiLookupState.Idle,
@@ -106,6 +121,11 @@ data class LexiconUiState(
 
     val bookmarkedPhrases: List<PhraseEntry>
         get() = allPhrases.filter { progressMap[it.id]?.bookmarked == true }
+
+    val learnedPhraseCount: Int
+        get() = progressMap.values.count {
+            it.lessonCompleted || it.attemptCount > 0L || it.reviewCount > 0L || it.bookmarked
+        }
 }
 
 private fun <T> Flow<T>.wrapSyncErrors(label: String): Flow<SyncEnvelope<T>> =
@@ -183,6 +203,10 @@ class LexiconViewModel(
             progressMap = progress,
             sessions = sessions
         )
+        val ebbinghaus = EbbinghausScheduler.computeDashboard(
+            allPhrases = mergedPhrases,
+            progressMap = progress
+        )
         SyncedSnapshot(
             syncError = firstError,
             profile = profile,
@@ -191,7 +215,8 @@ class LexiconViewModel(
             progressMap = progress,
             goals = goals,
             sessions = sessions,
-            insights = insights
+            insights = insights,
+            ebbinghaus = ebbinghaus
         )
     }
 
@@ -221,6 +246,7 @@ class LexiconViewModel(
             goals = synced.goals,
             quizSessions = synced.sessions,
             insights = synced.insights,
+            ebbinghaus = synced.ebbinghaus,
             selectedCategory = controls.category,
             searchQuery = controls.query,
             aiLookupState = controls.aiState,
@@ -344,6 +370,23 @@ class LexiconViewModel(
         }
     }
 
+    fun recordFlashcardReview(
+        phrase: PhraseEntry,
+        rating: RecallRating,
+        onScheduled: (nextIntervalLabel: String) -> Unit = {}
+    ) {
+        viewModelScope.launch {
+            firestoreRepo.recordFlashcardReview(phrase, rating)
+                .onSuccess { schedule ->
+                    onScheduled(schedule.nextIntervalLabel)
+                    _bannerMessage.value = "'${phrase.term}' scheduled for review in ${schedule.nextIntervalLabel}."
+                }
+                .onFailure { err ->
+                    _bannerMessage.value = err.localizedMessage ?: "Could not save review schedule."
+                }
+        }
+    }
+
     fun lookupPhraseWithAi(rawQuery: String) {
         val query = rawQuery.trim()
         if (query.isBlank()) {
@@ -352,7 +395,13 @@ class LexiconViewModel(
         }
         viewModelScope.launch {
             _aiLookupState.value = AiLookupState.Loading(query)
-            aiRepo.explainPhrase(query)
+            aiRepo.explainPhrase(query) { statusText, chars ->
+                _aiLookupState.value = AiLookupState.Loading(
+                    query = query,
+                    statusText = statusText,
+                    receivedChars = chars
+                )
+            }
                 .onSuccess { entry ->
                     val alreadySaved = uiState.value.customPhrases.any { it.id == entry.id }
                     _aiLookupState.value = AiLookupState.Success(entry, savedToLexicon = alreadySaved)
@@ -442,9 +491,21 @@ class LexiconViewModel(
 
         viewModelScope.launch {
             val label = current.fileName?.let { "Analyzing \"$it\"..." } ?: "Analyzing your passage..."
-            _textExtractorState.update { it.copy(status = TextExtractionStatus.Loading(label)) }
+            _textExtractorState.update {
+                it.copy(status = TextExtractionStatus.Loading(label = label))
+            }
 
-            aiRepo.extractVocabularyFromText(text, current.focus)
+            aiRepo.extractVocabularyFromText(text, current.focus) { detail, chars ->
+                _textExtractorState.update {
+                    it.copy(
+                        status = TextExtractionStatus.Loading(
+                            label = label,
+                            detail = detail,
+                            receivedChars = chars
+                        )
+                    )
+                }
+            }
                 .onSuccess { result ->
                     val existingSavedIds = uiState.value.customPhrases.map { it.id }.toSet()
                     val matchedSaved = result.items.map { it.entry.id }.filter { it in existingSavedIds }.toSet()
@@ -574,7 +635,8 @@ class LexiconViewModel(
         val progressMap: Map<String, PhraseProgressDoc>,
         val goals: List<LearningGoalDoc>,
         val sessions: List<QuizSessionDoc>,
-        val insights: LearningPathInsights
+        val insights: LearningPathInsights,
+        val ebbinghaus: EbbinghausDashboard
     )
 
     companion object {

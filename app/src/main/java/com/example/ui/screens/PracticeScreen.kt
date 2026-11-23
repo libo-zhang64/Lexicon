@@ -69,8 +69,10 @@ fun PracticeScreen(
     speakingItemId: String?,
     onSpeak: (itemId: String, text: String) -> Unit,
     onStartCuratedQuiz: (mode: QuizMode, category: CategoryFilter, focusIds: List<String>) -> Unit,
-    onStartTransferQuiz: (category: CategoryFilter) -> Unit,
+    onStartTransferQuiz: (category: CategoryFilter, allowPreview: Boolean) -> Unit,
+    onStartAiTransferBoost: (category: CategoryFilter) -> Unit,
     onStartAiQuiz: (topic: String, category: CategoryFilter) -> Unit,
+    onGoToLearn: () -> Unit,
     onSelectAnswer: (Int) -> Unit,
     onNextOrFinish: () -> Unit,
     onResetQuiz: () -> Unit,
@@ -89,7 +91,9 @@ fun PracticeScreen(
                 lexiconState = lexiconState,
                 onStartCuratedQuiz = onStartCuratedQuiz,
                 onStartTransferQuiz = onStartTransferQuiz,
-                onStartAiQuiz = onStartAiQuiz
+                onStartAiTransferBoost = onStartAiTransferBoost,
+                onStartAiQuiz = onStartAiQuiz,
+                onGoToLearn = onGoToLearn
             )
 
             is QuizUiState.LoadingAi -> {
@@ -109,10 +113,18 @@ fun PracticeScreen(
                     )
                     Spacer(modifier = Modifier.height(6.dp))
                     Text(
-                        text = "Building contextual dialogue, tone, and synonym challenges...",
+                        text = quizState.detail,
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
+                    if (quizState.receivedChars > 0) {
+                        Spacer(modifier = Modifier.height(8.dp))
+                        EditorialTag(
+                            text = "Streaming live • ${quizState.receivedChars} chars",
+                            containerColor = MaterialTheme.colorScheme.primaryContainer,
+                            contentColor = MaterialTheme.colorScheme.onPrimaryContainer
+                        )
+                    }
                 }
             }
 
@@ -132,7 +144,7 @@ fun PracticeScreen(
                     onStartCuratedQuiz(QuizMode.SMART_REVIEW, CategoryFilter.ALL, missedIds)
                 },
                 onRetryTransfer = {
-                    onStartTransferQuiz(quizState.category)
+                    onStartTransferQuiz(quizState.category, lexiconState.learnedPhraseCount == 0)
                 }
             )
 
@@ -179,14 +191,17 @@ fun PracticeScreen(
 private fun QuizSetupView(
     lexiconState: LexiconUiState,
     onStartCuratedQuiz: (mode: QuizMode, category: CategoryFilter, focusIds: List<String>) -> Unit,
-    onStartTransferQuiz: (category: CategoryFilter) -> Unit,
-    onStartAiQuiz: (topic: String, category: CategoryFilter) -> Unit
+    onStartTransferQuiz: (category: CategoryFilter, allowPreview: Boolean) -> Unit,
+    onStartAiTransferBoost: (category: CategoryFilter) -> Unit,
+    onStartAiQuiz: (topic: String, category: CategoryFilter) -> Unit,
+    onGoToLearn: () -> Unit
 ) {
     var selectedCategory by rememberSaveable { mutableStateOf(CategoryFilter.ALL) }
     var aiTopic by rememberSaveable { mutableStateOf("") }
 
     val weakPhraseIds = lexiconState.insights.frequentMistakePhrases.map { it.phrase.id }
     val activeGoal = lexiconState.insights.activeGoals.firstOrNull { !it.isCompleted }
+    val learnedCount = lexiconState.learnedPhraseCount
 
     LazyColumn(
         modifier = Modifier
@@ -197,12 +212,12 @@ private fun QuizSetupView(
     ) {
         item {
             EditorialSectionHeader(
-                eyebrow = "Active Recall & Transfer Learning",
+                eyebrow = "Active Recall & True Transfer Learning",
                 title = "Interactive Practice"
             )
         }
 
-        // Smart Weak-Spot Review Card (blends library weak spots + unseen transfer items)
+        // Smart Weak-Spot Review Card
         item {
             EditorialCard(
                 containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.72f),
@@ -234,9 +249,9 @@ private fun QuizSetupView(
                 Spacer(modifier = Modifier.height(4.dp))
                 Text(
                     text = if (weakPhraseIds.isNotEmpty()) {
-                        "Prioritizes the ${weakPhraseIds.size} expression(s) you've missed recently, plus 2 unseen transfer-learning questions not in your lessons."
+                        "Prioritizes the ${weakPhraseIds.size} expression(s) you missed recently and tests your learned vocabulary in fresh unseen contexts."
                     } else {
-                        "5 curated questions blending your library with 2 unseen real-world transfer challenges to build natural intuition."
+                        "5 curated questions blending active recall with fresh-context transfer scenarios for phrases you have already studied."
                     },
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
@@ -259,7 +274,7 @@ private fun QuizSetupView(
             }
         }
 
-        // Dedicated Transfer Learning Challenge Card (Unseen Expressions NOT in the learning library)
+        // True Transfer Learning Challenge Card (ALREADY-LEARNED words in BRAND-NEW UNSEEN contexts!)
         item {
             EditorialCard(
                 containerColor = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.78f),
@@ -267,53 +282,128 @@ private fun QuizSetupView(
                 modifier = Modifier.fillMaxWidth()
             ) {
                 Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Icon(
-                        imageVector = Icons.Default.Explore,
-                        contentDescription = null,
-                        tint = MaterialTheme.colorScheme.secondary,
-                        modifier = Modifier.size(20.dp)
-                    )
-                    Text(
-                        text = "TRANSFER LEARNING • NOT IN LESSONS",
-                        fontFamily = PhoneticMonoFamily,
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.secondary
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Explore,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.secondary,
+                            modifier = Modifier.size(20.dp)
+                        )
+                        Text(
+                            text = "TRUE TRANSFER • NEW CONTEXTS",
+                            fontFamily = PhoneticMonoFamily,
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.secondary
+                        )
+                    }
+                    EditorialTag(
+                        text = "$learnedCount learned",
+                        containerColor = MaterialTheme.colorScheme.surfaceContainerLowest,
+                        contentColor = MaterialTheme.colorScheme.secondary
                     )
                 }
                 Spacer(modifier = Modifier.height(8.dp))
                 Text(
-                    text = "Unseen Expression Challenge",
+                    text = "Apply Learned Words in Fresh Scenarios",
                     style = MaterialTheme.typography.headlineSmall,
                     color = MaterialTheme.colorScheme.onSecondaryContainer
                 )
                 Spacer(modifier = Modifier.height(4.dp))
                 Text(
-                    text = "Test true comprehension on 5 authentic American English idioms, slang, phrasal verbs, and workplace nuances that are NOT in the learning page—training you to decode new phrases from context.",
+                    text = if (learnedCount > 0) {
+                        "Tests your $learnedCount already-learned word${if (learnedCount == 1) "" else "s"} inside brand-new unseen conversations (podcasts, client calls, Slack threads, dinner debates)—never repeating the original lesson dialogue."
+                    } else {
+                        "Learn your first 5 phrases so Transfer Learning can place YOUR studied words into brand-new conversations and workplace scenarios."
+                    },
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSecondaryContainer.copy(alpha = 0.88f)
                 )
                 Spacer(modifier = Modifier.height(14.dp))
-                Button(
-                    onClick = { onStartTransferQuiz(selectedCategory) },
-                    shape = RoundedCornerShape(12.dp),
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = MaterialTheme.colorScheme.secondary,
-                        contentColor = MaterialTheme.colorScheme.onSecondary
-                    ),
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .heightIn(min = 48.dp)
-                        .testTag("practice_transfer_quiz_button")
-                ) {
-                    Icon(imageVector = Icons.Default.Explore, contentDescription = null, modifier = Modifier.size(18.dp))
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Text(
-                        if (selectedCategory == CategoryFilter.ALL) "Launch 5-Question Transfer Quiz"
-                        else "Transfer Quiz: ${selectedCategory.label}"
-                    )
+
+                if (learnedCount > 0) {
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Button(
+                            onClick = { onStartTransferQuiz(selectedCategory, false) },
+                            shape = RoundedCornerShape(12.dp),
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = MaterialTheme.colorScheme.secondary,
+                                contentColor = MaterialTheme.colorScheme.onSecondary
+                            ),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .heightIn(min = 48.dp)
+                                .testTag("practice_transfer_quiz_button")
+                        ) {
+                            Icon(imageVector = Icons.Default.Explore, contentDescription = null, modifier = Modifier.size(18.dp))
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text(
+                                if (selectedCategory == CategoryFilter.ALL) "Instant Transfer Scenarios"
+                                else "Instant Transfer: ${selectedCategory.label}"
+                            )
+                        }
+                        OutlinedButton(
+                            onClick = { onStartAiTransferBoost(selectedCategory) },
+                            border = BorderStroke(1.2.dp, MaterialTheme.colorScheme.secondary),
+                            shape = RoundedCornerShape(12.dp),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .heightIn(min = 48.dp)
+                                .testTag("practice_transfer_ai_boost_button")
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.AutoAwesome,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.secondary,
+                                modifier = Modifier.size(18.dp)
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text(
+                                text = "AI Fresh Conversation Boost",
+                                color = MaterialTheme.colorScheme.onSecondaryContainer
+                            )
+                        }
+                    }
+                } else {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Button(
+                            onClick = onGoToLearn,
+                            shape = RoundedCornerShape(12.dp),
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = MaterialTheme.colorScheme.secondary,
+                                contentColor = MaterialTheme.colorScheme.onSecondary
+                            ),
+                            modifier = Modifier
+                                .weight(1.2f)
+                                .heightIn(min = 48.dp)
+                                .testTag("practice_transfer_go_learn_button")
+                        ) {
+                            Text("Start First Lesson")
+                        }
+                        OutlinedButton(
+                            onClick = { onStartTransferQuiz(selectedCategory, true) },
+                            border = BorderStroke(1.dp, MaterialTheme.colorScheme.secondary),
+                            shape = RoundedCornerShape(12.dp),
+                            modifier = Modifier
+                                .weight(1f)
+                                .heightIn(min = 48.dp)
+                                .testTag("practice_transfer_preview_button")
+                        ) {
+                            Text(
+                                text = "Starter Preview",
+                                color = MaterialTheme.colorScheme.onSecondaryContainer
+                            )
+                        }
+                    }
                 }
             }
         }
@@ -537,7 +627,7 @@ private fun ActiveQuizView(
                 ) {
                     if (q.isTransferQuestion) {
                         EditorialTag(
-                            text = "TRANSFER • UNSEEN",
+                            text = q.transferDomainLabel ?: "NEW CONTEXT • TRANSFER",
                             containerColor = MaterialTheme.colorScheme.secondaryContainer,
                             contentColor = MaterialTheme.colorScheme.onSecondaryContainer
                         )
@@ -552,7 +642,7 @@ private fun ActiveQuizView(
                 if (q.isTransferQuestion) {
                     Spacer(modifier = Modifier.height(8.dp))
                     Text(
-                        text = "Not in the learning library — infer the meaning and tone from context.",
+                        text = "Fresh scenario for vocabulary you've studied — transfer it into a new real-world context.",
                         style = MaterialTheme.typography.labelMedium,
                         color = MaterialTheme.colorScheme.secondary
                     )

@@ -296,6 +296,14 @@ test("CustomPhrases & QuizSessions: owner operations succeed, quiz history is im
       missedPhraseIds: ["transfer_trenchant"],
     })
   );
+  await assertSucceeds(
+    aliceDb.doc(`users/${ALICE_UID}/quizSessions/session_ebbinghaus`).set({
+      ...validQuizSessionPayload(created),
+      mode: "EBBINGHAUS_REVIEW",
+      category: "ALL",
+      missedPhraseIds: ["iron_out"],
+    })
+  );
   await assertSucceeds(aliceDb.collection(`users/${ALICE_UID}/quizSessions`).get());
 
   // Quiz sessions are append-only (no updates)
@@ -315,4 +323,42 @@ test("CustomPhrases & QuizSessions: owner operations succeed, quiz history is im
   const bobDb = testEnv.authenticatedContext(BOB_UID).firestore();
   await assertFails(bobDb.collection(`users/${ALICE_UID}/customPhrases`).get());
   await assertFails(bobDb.collection(`users/${ALICE_UID}/quizSessions`).get());
+});
+
+test("PhraseProgress Ebbinghaus fields: valid schedule updates succeed; invalid stages rejected", async () => {
+  const aliceDb = testEnv.authenticatedContext(ALICE_UID).firestore();
+  const created = new Date(Date.now() - 10000);
+  const nowMs = Date.now();
+
+  await assertSucceeds(
+    aliceDb.doc(`users/${ALICE_UID}/phraseProgress/gre_laconic`).set({
+      ...validProgressPayload("gre_laconic", created),
+      category: "GRE_VOCAB",
+      ebbinghausStage: 1,
+      nextReviewAtMillis: nowMs + 86400000,
+      lastReviewAtMillis: nowMs,
+      intervalDays: 1,
+      reviewCount: 1,
+      lapseCount: 0,
+    })
+  );
+
+  await assertSucceeds(
+    aliceDb.doc(`users/${ALICE_UID}/phraseProgress/gre_laconic`).update({
+      ebbinghausStage: 3,
+      intervalDays: 7,
+      nextReviewAtMillis: nowMs + 7 * 86400000,
+      lastReviewAtMillis: nowMs,
+      reviewCount: 2,
+      updatedAt: new Date(Date.now() - 1000),
+    })
+  );
+
+  // Reject out-of-range Ebbinghaus stage (> 6)
+  await assertFails(
+    aliceDb.doc(`users/${ALICE_UID}/phraseProgress/gre_laconic`).update({
+      ebbinghausStage: 9,
+      updatedAt: new Date(Date.now() - 500),
+    })
+  );
 });

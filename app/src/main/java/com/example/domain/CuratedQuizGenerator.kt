@@ -1,6 +1,5 @@
 package com.example.domain
 
-import com.example.data.catalog.TransferQuizBank
 import com.example.data.model.CategoryFilter
 import com.example.data.model.PhraseEntry
 import com.example.data.model.PhraseProgressDoc
@@ -20,11 +19,19 @@ object CuratedQuizGenerator {
     ): List<QuizQuestion> {
         if (allPhrases.isEmpty()) return emptyList()
 
+        // True Transfer Learning: only interleave fresh-context transfer questions from ALREADY-LEARNED words
         val transferQuestions = if (includeTransfer && questionCount >= 3) {
-            TransferQuizBank.pickQuestions(categoryFilter, count = 2)
+            TransferScenarioEngine.buildTransferQuestionsForLearned(
+                allPhrases = allPhrases,
+                progressMap = progressMap,
+                categoryFilter = categoryFilter,
+                focusPhraseIds = focusPhraseIds,
+                questionCount = 2
+            )
         } else {
             emptyList()
         }
+        val transferPhraseIds = transferQuestions.map { it.phraseId }.toSet()
         val libraryCount = (questionCount - transferQuestions.size).coerceAtLeast(1)
 
         val filteredPool = allPhrases.filter { categoryFilter.matches(it.category) }
@@ -38,10 +45,10 @@ object CuratedQuizGenerator {
                 .thenByDescending { if (progressMap[it.id]?.bookmarked == true) 1 else 0 }
         )
 
-        // Add subtle variety among equally-ranked unstudied entries so every session feels fresh
         val topCandidates = prioritized.take((libraryCount * 3).coerceAtMost(filteredPool.size))
         val selected = (prioritized.filter { it.id in focusSet || (progressMap[it.id]?.missCount ?: 0L) > 0L } +
             topCandidates.shuffled())
+            .filterNot { it.id in transferPhraseIds && filteredPool.size > questionCount }
             .distinctBy { it.id }
             .take(libraryCount.coerceAtMost(filteredPool.size))
 
@@ -56,7 +63,6 @@ object CuratedQuizGenerator {
             buildQuestionForPhrase(target, allPhrases, qType, index)
         }
 
-        // Interleave transfer questions naturally into the practice session
         if (transferQuestions.isEmpty()) return curatedQuestions
         val merged = mutableListOf<QuizQuestion>()
         var cIdx = 0
@@ -69,11 +75,55 @@ object CuratedQuizGenerator {
         return merged.take(questionCount)
     }
 
+    /**
+     * Builds a True Transfer Learning quiz using the user's already-learned phrases
+     * inside brand-new unseen scenarios (distinct from their lesson dialogues).
+     */
     fun buildTransferQuiz(
+        allPhrases: List<PhraseEntry>,
+        progressMap: Map<String, PhraseProgressDoc>,
         categoryFilter: CategoryFilter = CategoryFilter.ALL,
-        questionCount: Int = 5
+        focusPhraseIds: List<String> = emptyList(),
+        questionCount: Int = 5,
+        allowStarterPreviewIfEmpty: Boolean = false
     ): List<QuizQuestion> {
-        return TransferQuizBank.pickQuestions(categoryFilter, count = questionCount)
+        val learnedQuestions = TransferScenarioEngine.buildTransferQuestionsForLearned(
+            allPhrases = allPhrases,
+            progressMap = progressMap,
+            categoryFilter = categoryFilter,
+            focusPhraseIds = focusPhraseIds,
+            questionCount = questionCount
+        )
+        if (learnedQuestions.isNotEmpty() || !allowStarterPreviewIfEmpty) {
+            return learnedQuestions
+        }
+        return TransferScenarioEngine.buildStarterPreview(
+            allPhrases = allPhrases,
+            categoryFilter = categoryFilter,
+            questionCount = questionCount
+        )
+    }
+
+    /**
+     * Builds an Ebbinghaus Active Recall quiz for due (or early-review) learned phrases,
+     * mixing fresh-context cloze recall, register recall, and meaning recall.
+     */
+    fun buildEbbinghausReviewQuiz(
+        reviewPhrases: List<PhraseEntry>,
+        allPhrases: List<PhraseEntry>,
+        questionCount: Int = 8
+    ): List<QuizQuestion> {
+        if (reviewPhrases.isEmpty() || allPhrases.isEmpty()) return emptyList()
+        val selected = reviewPhrases.take(questionCount)
+        val typesCycle = listOf(
+            QuizQuestionType.CLOZE,
+            QuizQuestionType.MEANING,
+            QuizQuestionType.REGISTER
+        )
+        return selected.mapIndexed { index, target ->
+            val qType = typesCycle[index % typesCycle.size]
+            buildQuestionForPhrase(target, allPhrases, qType, index)
+        }
     }
 
     fun buildSinglePhraseMiniQuiz(
@@ -108,7 +158,7 @@ object CuratedQuizGenerator {
                     phraseTerm = target.term,
                     category = target.category,
                     questionType = QuizQuestionType.CLOZE,
-                    prompt = "Which American expression naturally completes this conversation?",
+                    prompt = "Which expression naturally completes this conversation?",
                     contextSnippet = clozeSnippet,
                     options = optionEntries.map { it.term },
                     correctIndex = correctIndex,
@@ -183,7 +233,7 @@ object CuratedQuizGenerator {
         return if (combined.contains("________")) {
             combined
         } else {
-            "Context: Someone wants to express \"${entry.definition.replaceFirstChar { it.lowercase(Locale.US) }}\"\nLine: \"Honestly, I think we should ________ here.\""
+            "Context: Someone wants to express \"${entry.definition.replaceFirstChar { it.lowercase(Locale.US) }}\"\nLine: \"Honestly, I think ________ captures that best.\""
         }
     }
 }

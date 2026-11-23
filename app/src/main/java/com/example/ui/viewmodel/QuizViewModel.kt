@@ -12,6 +12,7 @@ import com.example.data.model.QuizAnswerRecord
 import com.example.data.model.QuizMode
 import com.example.data.model.QuizQuestion
 import com.example.domain.CuratedQuizGenerator
+import com.example.domain.TransferScenarioEngine
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -19,7 +20,12 @@ import kotlinx.coroutines.launch
 
 sealed interface QuizUiState {
     data object Setup : QuizUiState
-    data class LoadingAi(val label: String) : QuizUiState
+    data class LoadingAi(
+        val label: String,
+        val detail: String = "Streaming from Gemini 3.8 Flash...",
+        val receivedChars: Int = 0
+    ) : QuizUiState
+
     data class Active(
         val mode: QuizMode,
         val category: CategoryFilter,
@@ -90,21 +96,102 @@ class QuizViewModel(
         )
     }
 
+    /**
+     * True Transfer Learning: builds brand-new unseen scenarios for words the user has ALREADY learned.
+     */
     fun startTransferQuiz(
+        allPhrases: List<PhraseEntry>,
+        progressMap: Map<String, PhraseProgressDoc>,
         category: CategoryFilter = CategoryFilter.ALL,
-        questionCount: Int = 5
+        focusPhraseIds: List<String> = emptyList(),
+        questionCount: Int = 5,
+        allowStarterPreviewIfEmpty: Boolean = false
     ) {
         val questions = CuratedQuizGenerator.buildTransferQuiz(
+            allPhrases = allPhrases,
+            progressMap = progressMap,
             categoryFilter = category,
-            questionCount = questionCount
+            focusPhraseIds = focusPhraseIds,
+            questionCount = questionCount,
+            allowStarterPreviewIfEmpty = allowStarterPreviewIfEmpty
         )
         if (questions.isEmpty()) {
-            _uiState.value = QuizUiState.Error("No transfer challenges available right now.")
+            _uiState.value = QuizUiState.Error(
+                "Learn at least 1 phrase first so Transfer Learning can test your studied words inside brand-new conversations."
+            )
             return
         }
         _uiState.value = QuizUiState.Active(
             mode = QuizMode.TRANSFER_CHALLENGE,
             category = category,
+            questions = questions,
+            currentIndex = 0,
+            selectedOptionIndex = null,
+            records = emptyList()
+        )
+    }
+
+    /**
+     * Optional AI Boost for Transfer Learning:
+     * Streams bespoke unseen American conversations for the user's already-learned phrases.
+     */
+    fun startAiTransferBoostQuiz(
+        allPhrases: List<PhraseEntry>,
+        progressMap: Map<String, PhraseProgressDoc>,
+        category: CategoryFilter = CategoryFilter.ALL
+    ) {
+        val learned = TransferScenarioEngine.getLearnedPhrases(allPhrases, progressMap, category)
+        if (learned.isEmpty()) {
+            _uiState.value = QuizUiState.Error(
+                "Complete your first quick lesson to unlock AI Fresh Conversations for your learned vocabulary."
+            )
+            return
+        }
+        viewModelScope.launch {
+            val baseLabel = "Creating fresh AI conversations for your learned words..."
+            _uiState.value = QuizUiState.LoadingAi(label = baseLabel)
+            aiRepo.generateTransferBoostQuiz(learned, category) { detail, chars ->
+                _uiState.value = QuizUiState.LoadingAi(
+                    label = baseLabel,
+                    detail = detail,
+                    receivedChars = chars
+                )
+            }
+                .onSuccess { questions ->
+                    _uiState.value = QuizUiState.Active(
+                        mode = QuizMode.TRANSFER_CHALLENGE,
+                        category = category,
+                        questions = questions,
+                        currentIndex = 0,
+                        selectedOptionIndex = null,
+                        records = emptyList()
+                    )
+                }
+                .onFailure { err ->
+                    _uiState.value = QuizUiState.Error(
+                        err.localizedMessage ?: "Could not generate AI Transfer scenarios right now."
+                    )
+                }
+        }
+    }
+
+    fun startEbbinghausReviewQuiz(
+        reviewPhrases: List<PhraseEntry>,
+        allPhrases: List<PhraseEntry>,
+        questionCount: Int = 8
+    ) {
+        val questions = CuratedQuizGenerator.buildEbbinghausReviewQuiz(
+            reviewPhrases = reviewPhrases,
+            allPhrases = allPhrases,
+            questionCount = questionCount
+        )
+        if (questions.isEmpty()) {
+            _uiState.value = QuizUiState.Error("No learned words are ready for Ebbinghaus review yet.")
+            return
+        }
+        _uiState.value = QuizUiState.Active(
+            mode = QuizMode.EBBINGHAUS_REVIEW,
+            category = CategoryFilter.ALL,
             questions = questions,
             currentIndex = 0,
             selectedOptionIndex = null,
@@ -160,11 +247,19 @@ class QuizViewModel(
         category: CategoryFilter
     ) {
         viewModelScope.launch {
-            _uiState.value = QuizUiState.LoadingAi(
-                if (topicPrompt.isNotBlank()) "Crafting scenario quiz for \"$topicPrompt\"..."
-                else "Generating personalized American English quiz..."
-            )
-            aiRepo.generateCustomQuiz(topicPrompt, weakTerms, category)
+            val baseLabel = if (topicPrompt.isNotBlank()) {
+                "Crafting scenario quiz for \"$topicPrompt\"..."
+            } else {
+                "Generating personalized American English quiz..."
+            }
+            _uiState.value = QuizUiState.LoadingAi(label = baseLabel)
+            aiRepo.generateCustomQuiz(topicPrompt, weakTerms, category) { detail, chars ->
+                _uiState.value = QuizUiState.LoadingAi(
+                    label = baseLabel,
+                    detail = detail,
+                    receivedChars = chars
+                )
+            }
                 .onSuccess { questions ->
                     _uiState.value = QuizUiState.Active(
                         mode = QuizMode.AI_CUSTOM,

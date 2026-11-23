@@ -54,7 +54,7 @@ service cloud.firestore {
     }
 
     function isValidQuizMode(m) {
-      return m in ['SMART_REVIEW', 'GOAL_DRILL', 'CATEGORY_DRILL', 'TRANSFER_CHALLENGE', 'AI_CUSTOM'];
+      return m in ['SMART_REVIEW', 'GOAL_DRILL', 'CATEGORY_DRILL', 'TRANSFER_CHALLENGE', 'AI_CUSTOM', 'EBBINGHAUS_REVIEW'];
     }
 
     // --- Entity Validation Blueprints ---
@@ -102,6 +102,12 @@ service cloud.firestore {
              data.missedRegisterCount is int && data.missedRegisterCount >= 0 && data.missedRegisterCount <= 100000 &&
              data.missedMeaningCount is int && data.missedMeaningCount >= 0 && data.missedMeaningCount <= 100000 &&
              data.lastReviewedDay is string && data.lastReviewedDay.size() <= 20 &&
+             (!('ebbinghausStage' in data) || (data.ebbinghausStage is int && data.ebbinghausStage >= 0 && data.ebbinghausStage <= 6)) &&
+             (!('nextReviewAtMillis' in data) || (data.nextReviewAtMillis is int && data.nextReviewAtMillis >= 0 && data.nextReviewAtMillis <= 9000000000000)) &&
+             (!('lastReviewAtMillis' in data) || (data.lastReviewAtMillis is int && data.lastReviewAtMillis >= 0 && data.lastReviewAtMillis <= 9000000000000)) &&
+             (!('intervalDays' in data) || (data.intervalDays is int && data.intervalDays >= 0 && data.intervalDays <= 365)) &&
+             (!('reviewCount' in data) || (data.reviewCount is int && data.reviewCount >= 0 && data.reviewCount <= 100000)) &&
+             (!('lapseCount' in data) || (data.lapseCount is int && data.lapseCount >= 0 && data.lapseCount <= 100000)) &&
              data.createdAt is timestamp && data.createdAt <= request.time &&
              data.updatedAt is timestamp && data.updatedAt <= request.time;
     }
@@ -222,6 +228,8 @@ service cloud.firestore {
                            'masteredDay', 'masteredWeek', 'correctCount', 'attemptCount',
                            'missCount', 'consecutiveCorrect', 'missedClozeCount',
                            'missedRegisterCount', 'missedMeaningCount', 'lastReviewedDay',
+                           'ebbinghausStage', 'nextReviewAtMillis', 'lastReviewAtMillis',
+                           'intervalDays', 'reviewCount', 'lapseCount',
                            'createdAt', 'updatedAt'
                          ]) &&
                          isValidPhraseProgress(incoming(), phraseId);
@@ -238,6 +246,8 @@ service cloud.firestore {
                            'masteredDay', 'masteredWeek', 'correctCount', 'attemptCount',
                            'missCount', 'consecutiveCorrect', 'missedClozeCount',
                            'missedRegisterCount', 'missedMeaningCount', 'lastReviewedDay',
+                           'ebbinghausStage', 'nextReviewAtMillis', 'lastReviewAtMillis',
+                           'intervalDays', 'reviewCount', 'lapseCount',
                            'updatedAt'
                          ]);
 
