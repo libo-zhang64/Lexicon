@@ -1,7 +1,7 @@
 package com.example.domain
 
+import com.example.data.catalog.NaturalDialogueSynthesizer
 import com.example.data.model.CategoryFilter
-import com.example.data.model.PhraseCategory
 import com.example.data.model.PhraseEntry
 import com.example.data.model.PhraseProgressDoc
 import com.example.data.model.QuizQuestion
@@ -13,100 +13,18 @@ import kotlin.math.abs
  * True Transfer Learning Engine:
  * Selects expressions the learner has ALREADY studied/learned and places them inside
  * brand-new, unseen conversational settings, workplace situations, and paraphrase contexts
- * that are strictly distinct from the original lesson dialogue.
+ * that are strictly distinct from the original lesson dialogue—using genuine spoken English
+ * with zero meta-linguistic filler.
  */
 object TransferScenarioEngine {
-
-    private data class UnseenSetting(
-        val domainLabel: String,
-        val speakerA: String,
-        val speakerB: String,
-        val leadLine: String,
-        val responseWithBlank: (meaningLower: String, registerLabel: String) -> String
-    )
-
-    private val unseenSettings = listOf(
-        UnseenSetting(
-            domainLabel = "Podcast Debate",
-            speakerA = "Host (Tessa)",
-            speakerB = "Guest (Devon)",
-            leadLine = "Listeners wrote in asking why last week's announcement sparked such a big reaction.",
-            responseWithBlank = { meaning, _ ->
-                "Honestly, the whole panel felt that way—if you want to capture \"$meaning\" without rambling, you'd just say ________."
-            }
-        ),
-        UnseenSetting(
-            domainLabel = "Client Sync",
-            speakerA = "Priya",
-            speakerB = "Marcus",
-            leadLine = "Before we jump on the call with the client team, how should we summarize this trade-off?",
-            responseWithBlank = { meaning, reg ->
-                "Keep it $reg and clear—use ________ so they immediately get the idea of $meaning."
-            }
-        ),
-        UnseenSetting(
-            domainLabel = "Coffee Shop Catchup",
-            speakerA = "Chloe",
-            speakerB = "Sam",
-            leadLine = "Wait, tell me the real version of what happened after you left the meeting!",
-            responseWithBlank = { meaning, _ ->
-                "Picture this: everyone paused, and I realized the only phrase that nailed \"$meaning\" was ________."
-            }
-        ),
-        UnseenSetting(
-            domainLabel = "Slack Thread",
-            speakerA = "Noah (#product-ops)",
-            speakerB = "Elena (#product-ops)",
-            leadLine = "Quick wording check before I post the update to the whole org—does this sound right?",
-            responseWithBlank = { meaning, reg ->
-                "Super close! Swap that clunky sentence for ________—it's much more $reg for conveying $meaning."
-            }
-        ),
-        UnseenSetting(
-            domainLabel = "Book Club Night",
-            speakerA = "Nora",
-            speakerB = "Liam",
-            leadLine = "What was your biggest takeaway from the final chapter? The ending caught me off guard.",
-            responseWithBlank = { meaning, _ ->
-                "Same here. To sum up that feeling of $meaning in one natural expression, I'd call it ________."
-            }
-        ),
-        UnseenSetting(
-            domainLabel = "Dinner Banter",
-            speakerA = "Ava",
-            speakerB = "Owen",
-            leadLine = "My sister asked me how your new job is going—give me the unfiltered version.",
-            responseWithBlank = { meaning, reg ->
-                "Let's just say if you need a $reg expression for $meaning, ________ sums up my whole month."
-            }
-        ),
-        UnseenSetting(
-            domainLabel = "Editorial Review",
-            speakerA = "Rachel",
-            speakerB = "Caleb",
-            leadLine = "This paragraph feels a little wordy right before the conclusion—any tighter phrasing?",
-            responseWithBlank = { meaning, _ ->
-                "Trim the filler and drop in ________ right there—it nails $meaning with way sharper rhythm."
-            }
-        ),
-        UnseenSetting(
-            domainLabel = "Team Retro",
-            speakerA = "Hannah",
-            speakerB = "Jordan",
-            leadLine = "Looking back at the launch sprint, what's the one headline lesson we should carry forward?",
-            responseWithBlank = { meaning, reg ->
-                "In a $reg tone, ________ captures $meaning better than a three-bullet slide ever could."
-            }
-        )
-    )
 
     private val freshRealWorldRoleplays = listOf(
         "You're debriefing a colleague after a tense stakeholder review" to "Workplace Debrief",
         "You're chatting with a close friend while grabbing weekend coffee" to "Weekend Coffee",
-        "You're recording a voice note to recap a surprising plot twist" to "Voice Note Recap",
+        "You're sending a quick voice note to recap an unexpected plot twist" to "Voice Note Recap",
         "You're editing an op-ed draft with a senior editor on deadline" to "Newsroom Edit",
-        "You're replying in a lively group chat about a sudden change of plans" to "Group Chat",
-        "You're explaining a subtle pattern during a live Q&A panel" to "Live Q&A Panel"
+        "You're replying in a group chat about a sudden change of plans" to "Group Chat",
+        "You're answering a tough follow-up question during a live Q&A panel" to "Live Q&A Panel"
     )
 
     /**
@@ -144,7 +62,6 @@ object TransferScenarioEngine {
         if (learned.isEmpty()) return emptyList()
 
         val focusSet = focusPhraseIds.toSet()
-        // Prioritize focus phrases + recently studied/missed phrases, then shuffle for fresh variety
         val prioritized = learned.sortedWith(
             compareByDescending<PhraseEntry> { it.id in focusSet }
                 .thenByDescending { progressMap[it.id]?.missCount ?: 0L }
@@ -210,11 +127,13 @@ object TransferScenarioEngine {
 
         return when (type) {
             QuizQuestionType.CLOZE -> {
-                val setting = unseenSettings[seed % unseenSettings.size]
-                val snippet = buildString {
-                    append("${setting.speakerA}: \"${setting.leadLine}\"\n")
-                    append("${setting.speakerB}: \"${setting.responseWithBlank(defLower, regLower)}\"")
-                }
+                val scene = NaturalDialogueSynthesizer.buildTransferScene(
+                    category = target.category,
+                    term = target.term,
+                    definition = target.definition,
+                    seed = seed
+                )
+                val snippet = "${scene.speakerA}: \"${scene.leadLine}\"\n${scene.speakerB}: \"${scene.replyWithBlank}\""
                 val options = (distractors + target).shuffled()
                 val correctIndex = options.indexOfFirst { it.id == target.id }.coerceAtLeast(0)
                 QuizQuestion(
@@ -223,13 +142,13 @@ object TransferScenarioEngine {
                     phraseTerm = target.term,
                     category = target.category,
                     questionType = QuizQuestionType.CLOZE,
-                    prompt = "Apply your learned vocabulary in this brand-new conversation:",
+                    prompt = "Fill in the blank with the expression meaning \"$defLower\":",
                     contextSnippet = snippet,
                     options = options.map { it.term },
                     correctIndex = correctIndex,
-                    explanation = "Transfer match: \"${target.term}\" ($regLower) means $defLower. ${target.nuanceSummary}",
+                    explanation = "\"${target.term}\" ($regLower) means $defLower. ${target.nuanceSummary}",
                     isTransferQuestion = true,
-                    transferDomainLabel = "New Context • ${setting.domainLabel}"
+                    transferDomainLabel = "New Context • ${scene.domainLabel}"
                 )
             }
 
@@ -237,10 +156,10 @@ object TransferScenarioEngine {
                 val (situation, domainName) = freshRealWorldRoleplays[seed % freshRealWorldRoleplays.size]
                 val synHint = target.synonyms.firstOrNull()?.term
                 val snippet = buildString {
-                    append("Scenario: $situation. ")
-                    append("You need a $regLower expression that conveys \"$defLower\"")
+                    append("$situation. ")
+                    append("Goal: convey \"$defLower\" in a $regLower tone")
                     if (!synHint.isNullOrBlank()) {
-                        append(" (similar in spirit to \"$synHint\", with sharper American nuance).")
+                        append(" (close to \"$synHint\").")
                     } else {
                         append(".")
                     }
@@ -253,7 +172,7 @@ object TransferScenarioEngine {
                     phraseTerm = target.term,
                     category = target.category,
                     questionType = QuizQuestionType.REGISTER,
-                    prompt = "Which expression you've learned transfers best to this new situation?",
+                    prompt = "Which expression you've learned fits this situation best?",
                     contextSnippet = snippet,
                     options = options.map { it.term },
                     correctIndex = correctIndex,
@@ -264,8 +183,13 @@ object TransferScenarioEngine {
             }
 
             QuizQuestionType.MEANING -> {
-                val (situation, domainName) = freshRealWorldRoleplays[(seed + 3) % freshRealWorldRoleplays.size]
-                val freshSentence = buildFreshContextLineForMeaning(target, situation, seed)
+                val scene = NaturalDialogueSynthesizer.buildTransferScene(
+                    category = target.category,
+                    term = target.term,
+                    definition = target.definition,
+                    seed = seed + 3
+                )
+                val snippet = "${scene.speakerA}: \"${scene.leadLine}\"\n${scene.speakerB}: \"${scene.replyWithTarget}\""
                 val optionDefs = (distractors.map { it.definition } + target.definition).shuffled()
                 val correctIndex = optionDefs.indexOf(target.definition).coerceAtLeast(0)
                 QuizQuestion(
@@ -274,38 +198,15 @@ object TransferScenarioEngine {
                     phraseTerm = target.term,
                     category = target.category,
                     questionType = QuizQuestionType.MEANING,
-                    prompt = "In this unfamiliar setting, what does \"${target.term}\" signal?",
-                    contextSnippet = freshSentence,
+                    prompt = "What does \"${target.term}\" mean in this conversation?",
+                    contextSnippet = snippet,
                     options = optionDefs,
                     correctIndex = correctIndex,
-                    explanation = "In this new context, \"${target.term}\" still conveys: $cleanDef. ${target.nuanceSummary}",
+                    explanation = "\"${target.term}\" means: $cleanDef. ${target.nuanceSummary}",
                     isTransferQuestion = true,
-                    transferDomainLabel = "New Context • $domainName"
+                    transferDomainLabel = "New Context • ${scene.domainLabel}"
                 )
             }
         }
-    }
-
-    private fun buildFreshContextLineForMeaning(
-        entry: PhraseEntry,
-        situation: String,
-        seed: Int
-    ): String {
-        val term = entry.term
-        val contextTemplates = when (entry.category) {
-            PhraseCategory.GRE_VOCAB -> listOf(
-                "$situation:\n\"Honestly, watching how that played out felt unmistakably $term—nobody expected it.\"",
-                "$situation:\n\"Wait until you hear their reaction; the whole exchange was shaped by $term.\""
-            )
-            PhraseCategory.WORKPLACE -> listOf(
-                "$situation:\n\"Before we sign off on Q4, let's make sure we don't overlook $term.\"",
-                "$situation:\n\"Her manager brought up \"$term\" during the debrief, and the whole room nodded.\""
-            )
-            else -> listOf(
-                "$situation:\n\"No kidding—right in the middle of the story, she dropped \"$term\" and everyone laughed.\"",
-                "$situation:\n\"He turned to me afterward and said, 'Yeah, \"$term\" pretty much covers it.'\""
-            )
-        }
-        return contextTemplates[seed % contextTemplates.size]
     }
 }

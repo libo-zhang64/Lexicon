@@ -280,7 +280,7 @@ class AiLexiconRepository {
             val prompt = """
                 Lexicon entry for American English expression: "$cleaned".
                 Be crisp and concise (1 short sentence per field).
-                Use natural everyday US speakers in lineA/lineB with "$cleaned" spoken organically in lineB.
+                In lineA/lineB, write a genuine everyday US exchange where speakerB uses "$cleaned" organically—never talk about the phrase itself (no "sounds natural", "I'd call it", or quoting it as a vocabulary term).
             """.trimIndent()
 
             onProgress("Connecting to Gemini 3.8 Flash...", 0)
@@ -444,7 +444,8 @@ class AiLexiconRepository {
                 Create ${selected.size} concise TRANSFER LEARNING multiple-choice questions testing ONLY these exact expressions the learner ALREADY studied:
                 $wordBriefs
                 Rules:
-                - Place each expression in a BRAND-NEW realistic American conversation (podcast, coffee chat, client call, book club, dinner banter, newsroom) — never use textbook definitions as dialogue.
+                - Place each expression in a BRAND-NEW realistic American conversation (podcast, coffee chat, client call, book club, dinner banter, newsroom).
+                - Speakers must use the expression organically in real speech—NEVER talk about the word/phrase itself (no "I'd call it ___", "sounds natural", "captures that", or textbook definitions inside dialogue).
                 - Mix CLOZE (blank out the target word with ________), REGISTER, and MEANING.
                 - Keep dialogue snippets to 2 crisp lines and explanations to 1 concise sentence.
                 - Set phraseTerm to the EXACT target expression from the list above.
@@ -538,7 +539,7 @@ class AiLexiconRepository {
             val prompt = """
                 Extract 5 to 6 of the strongest B2-C2/GRE words or phrases directly from the text below.
                 Focus: ${focus.promptHint}
-                Rules: Every term MUST appear in the text. Skip basic words. Keep every field crisp and concise (1 short sentence max). Make dialogueA/dialogueB sound like natural everyday American speech.
+                Rules: Every term MUST appear in the text. Skip basic words. Keep every field crisp and concise (1 short sentence max). Make dialogueA/dialogueB genuine everyday American speech using the term naturally—never talk about the word itself (no "sounds natural", "I'd call it", or quoting the term).
 
                 TEXT:
                 $cleaned

@@ -140,4 +140,57 @@ class DomainUpgradesUnitTest {
             assertTrue("Expected due phrase ID in review quiz", q.phraseId in dueIds)
         }
     }
+
+    @Test
+    fun synthesizedDialoguesAndTransferScenesContainZeroFormulaicMetaLanguage() {
+        val bannedPhrases = listOf(
+            "sounds super natural",
+            "i'd call it",
+            "would call it",
+            "natural expression",
+            "native speakers",
+            "stiff textbook",
+            "hearing it in context",
+            "hearing it in a natural sentence",
+            "classic phrasing",
+            "love that framing",
+            "captures that best",
+            "sums up the whole situation",
+            "classic american idiom",
+            "in everyday speech"
+        )
+        val samples = listOf(
+            Triple(PhraseCategory.SLANG, "out of pocket", "Acting wildly inappropriate and rude"),
+            Triple(PhraseCategory.SLANG, "ate that", "Executed a performance or move flawlessly"),
+            Triple(PhraseCategory.SLANG, "say less", "Quick casual way to say I completely understand"),
+            Triple(PhraseCategory.IDIOM, "fall on your sword", "Take full public blame to protect your team"),
+            Triple(PhraseCategory.IDIOM, "a piece of the pie", "A lucrative share of profits or opportunity"),
+            Triple(PhraseCategory.IDIOM, "above and beyond", "Going noticeably further than expected"),
+            Triple(PhraseCategory.PHRASAL_VERB, "thrash out", "To debate tough disagreements until reaching firm terms"),
+            Triple(PhraseCategory.PHRASAL_VERB, "confide in", "To entrust private feelings to a trusted friend"),
+            Triple(PhraseCategory.PHRASAL_VERB, "blow over", "To subside naturally without lasting damage"),
+            Triple(PhraseCategory.WORKPLACE, "put a pin in it", "Pause a side topic temporarily during a meeting"),
+            Triple(PhraseCategory.WORKPLACE, "booked solid", "Having every hour of one's calendar filled"),
+            Triple(PhraseCategory.WORKPLACE, "critical path", "The longest chain of dependent tasks dictating completion"),
+            Triple(PhraseCategory.GRE_VOCAB, "abate", "Become less intense, strong, or widespread"),
+            Triple(PhraseCategory.GRE_VOCAB, "acerbic", "Sharp, biting, and forthright in tone or wit")
+        )
+
+        samples.forEachIndexed { idx, (category, term, def) ->
+            val lessonLines = com.example.data.catalog.NaturalDialogueSynthesizer
+                .buildNaturalLessonDialogue(category, term, def, idx + 7)
+                .joinToString(" ") { it.line }
+                .lowercase()
+            val transfer = com.example.data.catalog.NaturalDialogueSynthesizer
+                .buildTransferScene(category, term, def, idx + 13)
+            val transferLines = "${transfer.leadLine} ${transfer.replyWithTarget} ${transfer.replyWithBlank}".lowercase()
+
+            bannedPhrases.forEach { banned ->
+                assertFalse("Lesson dialogue for $term contained banned '$banned': $lessonLines", lessonLines.contains(banned))
+                assertFalse("Transfer scene for $term contained banned '$banned': $transferLines", transferLines.contains(banned))
+            }
+            assertTrue("Lesson dialogue for $term should use the expression directly", lessonLines.contains(term.lowercase()))
+            assertTrue("Transfer reply for $term should contain blank", transfer.replyWithBlank.contains("________"))
+        }
+    }
 }

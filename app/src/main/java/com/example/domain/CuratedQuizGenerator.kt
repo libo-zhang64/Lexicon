@@ -1,11 +1,13 @@
 package com.example.domain
 
+import com.example.data.catalog.NaturalDialogueSynthesizer
 import com.example.data.model.CategoryFilter
 import com.example.data.model.PhraseEntry
 import com.example.data.model.PhraseProgressDoc
 import com.example.data.model.QuizQuestion
 import com.example.data.model.QuizQuestionType
 import java.util.Locale
+import kotlin.math.abs
 
 object CuratedQuizGenerator {
 
@@ -233,7 +235,13 @@ object CuratedQuizGenerator {
         return if (combined.contains("________")) {
             combined
         } else {
-            "Context: Someone wants to express \"${entry.definition.replaceFirstChar { it.lowercase(Locale.US) }}\"\nLine: \"Honestly, I think ________ captures that best.\""
+            val scene = NaturalDialogueSynthesizer.buildTransferScene(
+                category = entry.category,
+                term = entry.term,
+                definition = entry.definition,
+                seed = abs(entry.id.hashCode())
+            )
+            "${scene.speakerA}: \"${scene.leadLine}\"\n${scene.speakerB}: \"${scene.replyWithBlank}\""
         }
     }
 }
