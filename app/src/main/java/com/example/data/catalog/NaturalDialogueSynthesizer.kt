@@ -1,16 +1,20 @@
 package com.example.data.catalog
 
+import com.example.data.catalog.SemanticIntentClassifier.Polarity
+import com.example.data.catalog.SemanticIntentClassifier.SemanticIntent
 import com.example.data.model.DialogueTurn
 import com.example.data.model.PhraseCategory
 import java.util.Locale
 import kotlin.math.abs
 
 /**
- * Synthesizes authentic, grammatically natural spoken American English conversations
+ * Synthesizes authentic, meaning-aligned spoken American English conversations
  * across all 5 vocabulary categories (Slang, Idioms, Phrasal Verbs, Workplace, GRE).
  *
- * Strictly avoids meta-linguistic filler (never quotes the target expression as "a phrase",
- * never says "sounds super natural", "I'd call it X", "native speakers say", or "in context").
+ * Every generated lesson dialogue and Transfer Learning scene is routed by BOTH
+ * grammatical slot (ExpressionGrammar) AND semantic meaning/polarity (SemanticIntent),
+ * preventing unrelated or wrong-sense stories from being paired with a target expression.
+ * Strictly avoids meta-linguistic filler.
  */
 object NaturalDialogueSynthesizer {
 
@@ -25,7 +29,8 @@ object NaturalDialogueSynthesizer {
         ADJECTIVE,
         DETERMINER_NOUN,
         DEFINITE_NOUN,
-        COUNTABLE_NOUN,
+        PERSON_NOUN,
+        THING_NOUN,
         UNCOUNTABLE_NOUN
     }
 
@@ -166,6 +171,14 @@ object NaturalDialogueSynthesizer {
         "better late than never", "actions speak louder than words", "easier said than done"
     )
 
+    private val negativeReactionTerms = setOf("my bad", "yikes", "oof", "hard pass", "not me")
+    private val neutralReactionTerms = setOf(
+        "fair enough", "touché", "touche", "you do you", "it is what it is",
+        "to each their own", "different strokes", "time will tell",
+        "better late than never", "easier said than done", "my lips are sealed",
+        "break a leg", "fingers crossed", "knock on wood", "speak of the devil"
+    )
+
     private val objectRequiringTailPreps = setOf(
         "to", "for", "with", "from", "of", "at", "after", "against", "about", "into", "upon",
         "onto", "by", "over", "through", "on"
@@ -177,18 +190,29 @@ object NaturalDialogueSynthesizer {
         "tip", "rest", "bulk", "heart", "root", "core", "top", "end", "benefit", "thick"
     )
 
+    private val adjectiveDefinitionStarters = listOf(
+        "extremely ", "very ", "overly ", "unusually ", "highly ", "noticeably ",
+        "fiercely ", "wildly ", "utterly ", "openly ", "emotionally ", "physically ",
+        "socially ", "financially ", "exceptionally ", "enthusiastic modern slang meaning extraordinarily",
+        "over-the-top", "mediocre", "predictably ", "feeling ", "uncomfortably ",
+        "ready and willing", "completely ", "brand-new", "unfiltered", "trim, efficient",
+        "stylishly ", "painfully ", "super close", "having every hour", "classic surf",
+        "modern slang for disappointingly", "sharp, ", "bitter, ", "lacking ", "full of ",
+        "characterized by", "marked by", "showing ", "inclined to", "prone to", "capable of",
+        "lasting ", "impossible to", "difficult to", "easy to", "willing ", "reluctant ",
+        "deeply ", "acting ", "available ", "suddenly ", "pumped ", "hostile", "conducted ",
+        "repeating ", "caught ", "playfully caught", "legitimate, ", "honest and ", "fresh, ",
+        "mainstream, ", "short-lived", "clear and ", "vague", "secret", "hidden", "harsh",
+        "gentle", "calm", "bold", "timid", "lazy", "eager", "stubborn", "flexible"
+    )
+
     fun cleanTerm(term: String): String =
         term.replace(Regex("\\([^)]*\\)"), "").trim()
 
     fun articleFor(word: String): String {
         val lower = word.trim().lowercase(Locale.US)
-        if (lower.startsWith("uni") || lower.startsWith("use") || lower.startsWith("eu") ||
-            lower.startsWith("one") || lower.startsWith("honest").not() && lower.startsWith("ho")
-        ) {
-            // Handle common exceptions ("unique", "useful", "one-off")
-            if (lower.startsWith("uni") || lower.startsWith("use") || lower.startsWith("eu") || lower.startsWith("one")) {
-                return "a"
-            }
+        if (lower.startsWith("uni") || lower.startsWith("use") || lower.startsWith("eu") || lower.startsWith("one")) {
+            return "a"
         }
         if (lower.startsWith("honest") || lower.startsWith("hour") || lower.startsWith("heir")) {
             return "an"
@@ -212,6 +236,8 @@ object NaturalDialogueSynthesizer {
         if (lower in standaloneReactionTerms ||
             defLower.startsWith("quick casual way to say") ||
             defLower.startsWith("casual way to say") ||
+            defLower.startsWith("short affirmative reply") ||
+            defLower.startsWith("a crisp modern slang confirmation") ||
             defLower.startsWith("exclamation") ||
             defLower.startsWith("interjection") ||
             defLower.startsWith("a quick reply") ||
@@ -221,155 +247,149 @@ object NaturalDialogueSynthesizer {
             return ExpressionGrammar.STANDALONE_REACTION
         }
 
-        // Past-tense completed slang/idioms ("ate that", "nailed it", "crushed it")
-        if (firstWord in setOf("ate", "nailed", "crushed", "killed", "slayed", "bombed", "cooked", "dodged", "dropped") &&
+        if (firstWord in setOf("ate", "nailed", "crushed", "killed", "slayed", "bombed", "dodged", "dropped") &&
             words.size >= 2
         ) {
             return ExpressionGrammar.PAST_VERB_PHRASE
         }
 
-        // Determiner-led nouns ("a piece of the pie", "the extra mile")
         if (firstWord in setOf("a", "an", "the")) {
             return ExpressionGrammar.DETERMINER_NOUN
         }
 
-        // Category-tuned rules
         if (category == PhraseCategory.PHRASAL_VERB) {
-            val isIntransitive = defLower.startsWith("to become") ||
-                defLower.startsWith("to move") ||
-                defLower.startsWith("to walk") ||
-                defLower.startsWith("to stay") ||
-                defLower.startsWith("to subside") ||
-                defLower.startsWith("to behave") ||
-                defLower.startsWith("to malfunction") ||
-                defLower.startsWith("to wait") ||
-                defLower.startsWith("to leave") ||
-                defLower.startsWith("to arrive") ||
-                defLower.startsWith("to happen") ||
-                defLower.startsWith("to appear") ||
-                defLower.startsWith("to vanish") ||
-                defLower.startsWith("to fail") ||
-                defLower.startsWith("to stop") ||
-                defLower.startsWith("to collapse") ||
-                defLower.startsWith("to sleep") ||
-                defLower.startsWith("to relax") ||
-                defLower.startsWith("to gather") ||
-                defLower.startsWith("to agree") ||
-                defLower.startsWith("to argue") ||
-                defLower.startsWith("to speak") ||
-                defLower.startsWith("to laugh") ||
-                defLower.startsWith("to cry") ||
-                defLower.startsWith("to wake") ||
-                defLower.startsWith("to hurry") ||
-                defLower.startsWith("to slow") ||
-                defLower.startsWith("to fall") ||
-                defLower.startsWith("to rise") ||
-                defLower.startsWith("to run") ||
-                defLower.startsWith("to sit") ||
-                defLower.startsWith("to stand") ||
-                defLower.startsWith("to hang") ||
-                defLower.startsWith("to die") ||
-                defLower.startsWith("to live") ||
-                defLower.startsWith("to work") ||
-                defLower.startsWith("to grow") ||
-                defLower.startsWith("to calm") ||
-                defLower.startsWith("to settle") ||
-                defLower.startsWith("to fade") ||
-                defLower.startsWith("to break down") ||
-                defLower.startsWith("to show up") ||
-                lastWord in setOf("together", "apart", "ahead", "along", "away", "around")
-
-            val targetsPerson = defLower.contains("someone") ||
-                defLower.contains("a friend") ||
-                defLower.contains("a person") ||
-                defLower.contains("people") ||
-                defLower.contains("colleague") ||
-                defLower.contains("partner")
-
-            return when {
-                isIntransitive && lastWord !in setOf("to", "for", "with", "from", "of", "at", "after", "into") ->
-                    ExpressionGrammar.INTRANSITIVE_VERB
-                targetsPerson -> ExpressionGrammar.TRANSITIVE_PERSON_VERB
-                else -> ExpressionGrammar.TRANSITIVE_THING_VERB
-            }
+            return classifyPhrasalVerb(lastWord, defLower)
         }
 
         if (category == PhraseCategory.GRE_VOCAB) {
-            return classifyGre(lower, defLower)
+            return classifyGre(clean, lower, defLower)
         }
 
-        // Prepositional / negated predicate states ("above and beyond", "out of pocket", "up to your neck", "not in Kansas anymore")
+        // Prepositional / negated predicate states ("out of pocket", "above board", "up to your neck", "sick and tired")
         if (firstWord in prepStarters || firstWord == "not" || firstWord == "no" ||
-            lower.contains(" and ") && (firstWord in setOf("sick", "tired", "fed", "safe", "high", "down", "far", "fast", "loud", "dead", "alive", "free", "fair", "short", "sweet", "rough", "ready"))
+            (lower.contains(" and ") && firstWord in setOf(
+                "sick", "tired", "fed", "safe", "high", "down", "far", "fast", "loud",
+                "dead", "alive", "free", "fair", "short", "sweet", "rough", "ready"
+            ))
         ) {
             return ExpressionGrammar.PREPOSITIONAL_STATE
         }
 
-        // Verb phrases in Idioms / Workplace / Slang
-        if (firstWord in commonVerbStarters) {
+        // Check definition-driven NOUNS BEFORE commonVerbStarters so polysemous nouns
+        // like "cap", "tea", "shade", "pitch", "base", "margin", "runway", "cliff", "sponsor"
+        // are NEVER misclassified as verbs!
+        if (defLower.startsWith("a ") || defLower.startsWith("an ") ||
+            defLower.startsWith("someone ") || defLower.startsWith("one who ") ||
+            defLower.startsWith("modern slang meaning a ") || defLower.startsWith("slang for a ")
+        ) {
+            return when {
+                firstWord in definiteNounStarters -> ExpressionGrammar.DEFINITE_NOUN
+                SemanticIntentClassifier.isPersonNoun(clean, definition) -> ExpressionGrammar.PERSON_NOUN
+                else -> ExpressionGrammar.THING_NOUN
+            }
+        }
+        if (defLower.startsWith("juicy,") || defLower.startsWith("subtle,") ||
+            defLower.startsWith("home turf") || defLower.startsWith("ownership shares") ||
+            defLower.startsWith("available time") || defLower.startsWith("the quality of") ||
+            defLower.startsWith("the state of") || defLower.startsWith("the percentage") ||
+            defLower.startsWith("the initial") || defLower.startsWith("formal ") ||
+            defLower.startsWith("rapid, ") || defLower.startsWith("how a ") ||
+            (defLower.startsWith("the ") && !defLower.startsWith("the act of"))
+        ) {
+            return if (firstWord in definiteNounStarters) {
+                ExpressionGrammar.DEFINITE_NOUN
+            } else {
+                ExpressionGrammar.UNCOUNTABLE_NOUN
+            }
+        }
+
+        // Check definition-driven ADJECTIVES BEFORE commonVerbStarters so polysemous adjectives
+        // like "fire", "sick", "steep", "tight", "lean", "sharp", "booked solid", "cooked", "mid", "extra"
+        // are NEVER misclassified as verbs!
+        if (adjectiveDefinitionStarters.any { defLower.startsWith(it) }) {
+            return ExpressionGrammar.ADJECTIVE
+        }
+
+        // Verb phrases (definition starts with verb or term begins with common verb starter)
+        val defLooksLikeVerb = defLower.startsWith("to ") ||
+            defLower.startsWith("perform ") || defLower.startsWith("make ") ||
+            defLower.startsWith("cause ") || defLower.startsWith("cast ") ||
+            defLower.startsWith("push ") || defLower.startsWith("take ") ||
+            defLower.startsWith("give ") || defLower.startsWith("put ") ||
+            defLower.startsWith("show off") || defLower.startsWith("cover ") ||
+            defLower.startsWith("pay ") || defLower.startsWith("present ") ||
+            defLower.startsWith("call out") || defLower.startsWith("hype ") ||
+            defLower.startsWith("abruptly ") || defLower.startsWith("simmer ") ||
+            defLower.startsWith("sit simmering") || defLower.startsWith("walk ") ||
+            defLower.startsWith("reveal ") || defLower.startsWith("exhaust ") ||
+            defLower.startsWith("underestimate ") || defLower.startsWith("subject ")
+
+        if (defLooksLikeVerb || firstWord in commonVerbStarters) {
             val alreadyHasObject = words.size >= 2 && (
-                lastWord in setOf("it", "them", "him", "her", "us", "yourself", "myself", "hand", "sword", "ice", "bait", "bullet", "chase", "base", "curve", "line", "ball", "hat", "water", "fire", "air", "wind", "ship", "deck", "table", "floor", "wall", "book", "card", "cards", "hatchet", "towel", "beans", "cat", "bag", "boat", "bridge", "bridges", "bucket", "cake", "candle", "ends", "corner", "corners", "cord", "day", "deal", "dirt", "dust", "edge", "eye", "face", "feet", "foot", "gap", "gas", "gear", "gold", "ground", "gun", "hair", "head", "heat", "hell", "hook", "horn", "horse", "house", "jaw", "knee", "knot", "leg", "lid", "light", "loop", "mark", "mind", "money", "moon", "mouth", "music", "nail", "neck", "nerve", "news", "night", "nose", "nut", "ocean", "oil", "pace", "page", "pain", "pan", "paper", "part", "party", "path", "peace", "penny", "pie", "pill", "pin", "pipe", "pitch", "place", "plan", "plate", "plug", "point", "pot", "plug", "pulse", "punch", "question", "rain", "record", "red", "reins", "ring", "road", "rock", "roof", "room", "rope", "round", "row", "rug", "rule", "salt", "sand", "scene", "score", "scratch", "screw", "sea", "seat", "seed", "sense", "shape", "sheet", "shell", "shirt", "shoe", "shoes", "shot", "shoulder", "show", "side", "sight", "sign", "skin", "sky", "slack", "slate", "sleeve", "smoke", "snow", "sock", "socks", "song", "soul", "soup", "spade", "spark", "speed", "spell", "spin", "spirit", "spot", "stage", "stake", "stakes", "stand", "star", "stars", "steam", "steel", "step", "stick", "stone", "storm", "story", "straw", "streak", "street", "stride", "strike", "string", "strings", "strip", "stuff", "suit", "sun", "surface", "sweat", "switch", "tab", "tail", "tape", "target", "taste", "tea", "team", "teeth", "tempo", "test", "thick", "thin", "thing", "things", "thread", "throat", "thumb", "thunder", "ticket", "tide", "time", "tin", "tip", "title", "toe", "toes", "toll", "tone", "tongue", "tooth", "top", "torch", "touch", "town", "track", "tracks", "trade", "trail", "train", "trap", "trash", "tree", "trend", "trick", "trigger", "trip", "trouble", "truck", "trump", "truth", "tube", "tune", "turf", "turn", "twist", "two", "umbrella", "up", "value", "veil", "vein", "view", "voice", "void", "vote", "wage", "wagon", "waist", "wake", "walk", "war", "wash", "watch", "wave", "way", "weather", "web", "wedge", "weed", "weeds", "week", "weight", "well", "west", "wheel", "wheels", "whim", "whip", "whirl", "whistle", "white", "whole", "wick", "wife", "wild", "will", "win", "wing", "wings", "wink", "wire", "wish", "wit", "wits", "wolf", "wood", "woods", "wool", "word", "words", "work", "world", "worm", "worms", "worth", "wound", "wrap", "wraps", "wreck", "wrench", "wrist", "wrong", "yard", "year", "years", "yellow", "yes", "yield", "yoke", "zero", "zone") ||
-                    words.any { it in setOf("a", "an", "the", "your", "my", "our", "his", "her", "their", "one's") }
-                )
+                lastWord in setOf(
+                    "it", "them", "him", "her", "us", "yourself", "myself", "oneself",
+                    "hand", "sword", "ice", "bait", "bullet", "chase", "base", "curve", "line",
+                    "ball", "hat", "water", "fire", "air", "wind", "ship", "deck", "table",
+                    "floor", "wall", "book", "card", "cards", "hatchet", "towel", "beans",
+                    "cat", "bag", "boat", "bridge", "bridges", "bucket", "cake", "candle",
+                    "ends", "corner", "corners", "cord", "day", "deal", "dirt", "dust", "edge",
+                    "eye", "face", "feet", "foot", "gap", "gas", "gear", "gold", "ground",
+                    "gun", "hair", "head", "heat", "hell", "hook", "horn", "horse", "house",
+                    "jaw", "knee", "knot", "leg", "lid", "light", "loop", "mark", "mind",
+                    "money", "moon", "mouth", "music", "nail", "neck", "nerve", "news",
+                    "night", "nose", "nut", "ocean", "oil", "pace", "page", "pain", "pan",
+                    "paper", "part", "party", "path", "peace", "penny", "pie", "pill", "pin",
+                    "pipe", "pitch", "place", "plan", "plate", "plug", "point", "pot", "pulse",
+                    "punch", "question", "rain", "record", "red", "reins", "ring", "road",
+                    "rock", "roof", "room", "rope", "round", "row", "rug", "rule", "salt",
+                    "sand", "scene", "score", "scratch", "screw", "sea", "seat", "seed",
+                    "sense", "shape", "sheet", "shell", "shirt", "shoe", "shoes", "shot",
+                    "shoulder", "show", "side", "sight", "sign", "skin", "sky", "slack",
+                    "slate", "sleeve", "smoke", "snow", "sock", "socks", "song", "soul",
+                    "soup", "spade", "spark", "speed", "spell", "spin", "spirit", "spot",
+                    "stage", "stake", "stakes", "stand", "star", "stars", "steam", "steel",
+                    "step", "stick", "stone", "storm", "story", "straw", "streak", "street",
+                    "stride", "strike", "string", "strings", "strip", "stuff", "suit", "sun",
+                    "surface", "sweat", "switch", "tab", "tail", "tape", "target", "taste",
+                    "tea", "team", "teeth", "tempo", "test", "thick", "thin", "thing",
+                    "things", "thread", "throat", "thumb", "thunder", "ticket", "tide", "time",
+                    "tin", "tip", "title", "toe", "toes", "toll", "tone", "tongue", "tooth",
+                    "top", "torch", "touch", "town", "track", "tracks", "trade", "trail",
+                    "train", "trap", "trash", "tree", "trend", "trick", "trigger", "trip",
+                    "trouble", "truck", "trump", "truth", "tube", "tune", "turf", "turn",
+                    "twist", "two", "umbrella", "value", "veil", "vein", "view", "voice",
+                    "void", "vote", "wage", "wagon", "waist", "wake", "walk", "war", "wash",
+                    "watch", "wave", "way", "weather", "web", "wedge", "weed", "weeds", "week",
+                    "weight", "well", "west", "wheel", "wheels", "whim", "whip", "whirl",
+                    "whistle", "white", "whole", "wick", "wife", "wild", "will", "win",
+                    "wing", "wings", "wink", "wire", "wish", "wit", "wits", "wolf", "wood",
+                    "woods", "wool", "word", "words", "work", "world", "worm", "worms",
+                    "worth", "wound", "wrap", "wraps", "wreck", "wrench", "wrist", "wrong",
+                    "yard", "year", "years", "yellow", "yes", "yield", "yoke", "zero", "zone"
+                ) || words.any {
+                    it in setOf("a", "an", "the", "your", "my", "our", "his", "her", "their", "one's", "someone's", "someone")
+                }
+            )
             return when {
                 alreadyHasObject -> ExpressionGrammar.COMPLETE_VERB_PHRASE
-                lastWord in objectRequiringTailPreps && (defLower.contains("someone") || defLower.contains("person") || defLower.contains("them")) ->
+                (lastWord in objectRequiringTailPreps || words.size == 1) &&
+                    (defLower.contains("someone") || defLower.contains("a friend") || defLower.contains("a buddy") || defLower.contains("person")) ->
                     ExpressionGrammar.TRANSITIVE_PERSON_VERB
-                lastWord in objectRequiringTailPreps || defLower.contains("something") || defLower.contains("a ") || defLower.contains("the ") ->
+                lastWord in objectRequiringTailPreps || defLower.contains("something") ||
+                    defLower.startsWith("call out") || defLower.startsWith("present ") ||
+                    defLower.startsWith("pay ") || defLower.startsWith("cover ") ->
                     ExpressionGrammar.TRANSITIVE_THING_VERB
                 else -> ExpressionGrammar.INTRANSITIVE_VERB
             }
         }
 
-        // Nouns vs Adjectives based on definition
-        if (defLower.startsWith("a ") || defLower.startsWith("an ") || defLower.startsWith("someone ") || defLower.startsWith("one who ")) {
-            return if (firstWord in definiteNounStarters) {
-                ExpressionGrammar.DEFINITE_NOUN
-            } else {
-                ExpressionGrammar.COUNTABLE_NOUN
-            }
-        }
-        if (defLower.startsWith("the ") || defLower.startsWith("having ") || defLower.startsWith("earning ") ||
-            defLower.startsWith("treating ") || defLower.startsWith("discussing ") || defLower.startsWith("holding ") ||
-            defLower.startsWith("how a ") || defLower.startsWith("rapid, ") || defLower.startsWith("formal ") ||
-            defLower.startsWith("coffee, ")
-        ) {
-            return when {
-                firstWord in definiteNounStarters -> ExpressionGrammar.DEFINITE_NOUN
-                defLower.startsWith("having ") || defLower.startsWith("feeling ") || defLower.startsWith("acting ") ||
-                    defLower.startsWith("utterly ") || defLower.startsWith("deeply ") || defLower.startsWith("available ") ||
-                    defLower.startsWith("suddenly ") || defLower.startsWith("pumped ") || defLower.startsWith("hostile") ||
-                    defLower.startsWith("conducted ") || defLower.startsWith("repeating ") -> ExpressionGrammar.ADJECTIVE
-                else -> ExpressionGrammar.UNCOUNTABLE_NOUN
-            }
-        }
-
-        // Adjective cues
-        if (defLower.startsWith("extremely ") || defLower.startsWith("very ") || defLower.startsWith("overly ") ||
-            defLower.startsWith("unusually ") || defLower.startsWith("highly ") || defLower.startsWith("noticeably ") ||
-            defLower.startsWith("fiercely ") || defLower.startsWith("wildly ") || defLower.startsWith("utterly ") ||
-            defLower.startsWith("openly ") || defLower.startsWith("emotionally ") || defLower.startsWith("physically ") ||
-            defLower.startsWith("socially ") || defLower.startsWith("financially ") ||
-            lower.endsWith("ed") || lower.endsWith("ous") || lower.endsWith("ive") ||
+        // Morphological adjective cues
+        if (lower.endsWith("ed") || lower.endsWith("ous") || lower.endsWith("ive") ||
             lower.endsWith("ful") || lower.endsWith("less") || lower.endsWith("able") ||
             lower.endsWith("ible") || lower.endsWith("ish") || lower.endsWith("ic") ||
-            lower.endsWith("al") || lower.endsWith("y") && words.size == 1
+            lower.endsWith("al") || (lower.endsWith("y") && words.size == 1)
         ) {
             return ExpressionGrammar.ADJECTIVE
-        }
-
-        // Verb cues from definition
-        if (defLower.startsWith("to ") || defLower.startsWith("perform ") || defLower.startsWith("make ") ||
-            defLower.startsWith("cause ") || defLower.startsWith("deciding ") || defLower.startsWith("cast ") ||
-            defLower.startsWith("push ") || defLower.startsWith("take ") || defLower.startsWith("exhaust ") ||
-            defLower.startsWith("dream ") || defLower.startsWith("reveal ") || defLower.startsWith("abruptly ") ||
-            defLower.startsWith("underestimate ") || defLower.startsWith("subject ")
-        ) {
-            return if (defLower.contains("someone") || defLower.contains("person")) {
-                ExpressionGrammar.TRANSITIVE_PERSON_VERB
-            } else {
-                ExpressionGrammar.COMPLETE_VERB_PHRASE
-            }
         }
 
         return if (words.size >= 2) {
@@ -379,10 +399,47 @@ object NaturalDialogueSynthesizer {
         }
     }
 
-    private fun classifyGre(lowerTerm: String, lowerDef: String): ExpressionGrammar {
+    private fun classifyPhrasalVerb(lastWord: String, defLower: String): ExpressionGrammar {
+        val isIntransitive = defLower.startsWith("to become") ||
+            defLower.startsWith("to move") || defLower.startsWith("to walk") ||
+            defLower.startsWith("to stay") || defLower.startsWith("to subside") ||
+            defLower.startsWith("to behave") || defLower.startsWith("to malfunction") ||
+            defLower.startsWith("to wait") || defLower.startsWith("to leave") ||
+            defLower.startsWith("to arrive") || defLower.startsWith("to happen") ||
+            defLower.startsWith("to appear") || defLower.startsWith("to vanish") ||
+            defLower.startsWith("to fail") || defLower.startsWith("to stop") ||
+            defLower.startsWith("to collapse") || defLower.startsWith("to sleep") ||
+            defLower.startsWith("to relax") || defLower.startsWith("to gather") ||
+            defLower.startsWith("to agree") || defLower.startsWith("to argue") ||
+            defLower.startsWith("to speak") || defLower.startsWith("to laugh") ||
+            defLower.startsWith("to cry") || defLower.startsWith("to wake") ||
+            defLower.startsWith("to hurry") || defLower.startsWith("to slow") ||
+            defLower.startsWith("to fall") || defLower.startsWith("to rise") ||
+            defLower.startsWith("to run") || defLower.startsWith("to sit") ||
+            defLower.startsWith("to stand") || defLower.startsWith("to hang") ||
+            defLower.startsWith("to die") || defLower.startsWith("to live") ||
+            defLower.startsWith("to work") || defLower.startsWith("to grow") ||
+            defLower.startsWith("to calm") || defLower.startsWith("to settle") ||
+            defLower.startsWith("to fade") || defLower.startsWith("to break down") ||
+            defLower.startsWith("to show up") ||
+            lastWord in setOf("together", "apart", "ahead", "along", "away", "around")
+
+        val targetsPerson = defLower.contains("someone") ||
+            defLower.contains("a friend") || defLower.contains("a person") ||
+            defLower.contains("people") || defLower.contains("colleague") ||
+            defLower.contains("partner")
+
+        return when {
+            isIntransitive && lastWord !in setOf("to", "for", "with", "from", "of", "at", "after", "into") ->
+                ExpressionGrammar.INTRANSITIVE_VERB
+            targetsPerson -> ExpressionGrammar.TRANSITIVE_PERSON_VERB
+            else -> ExpressionGrammar.TRANSITIVE_THING_VERB
+        }
+    }
+
+    private fun classifyGre(clean: String, lowerTerm: String, lowerDef: String): ExpressionGrammar {
         val nounPrefixes = listOf(
-            "a ", "an ", "the ", "one who ", "someone who ", "something ",
-            "lack of", "state of", "quality of", "act of", "growth or",
+            "the ", "lack of", "state of", "quality of", "act of", "growth or",
             "bitterness", "humble ", "conformity", "brisk,", "excessive ",
             "deep ", "intense ", "strong ", "public ", "official ", "formal "
         )
@@ -393,7 +450,8 @@ object NaturalDialogueSynthesizer {
             "shrink ", "to shrink ", "speak ", "to speak ", "talk ", "to talk ",
             "wait ", "to wait ", "live ", "to live ", "move ", "to move ",
             "act ", "to act ", "wander ", "to wander ", "waver ", "to waver ",
-            "subside", "fade", "vanish", "hesitate", "fluctuate", "persist"
+            "walk ", "to walk ", "subside", "fade", "vanish", "hesitate", "fluctuate",
+            "persist", "flee", "escape", "proliferate", "burgeon", "languish", "dwindle"
         )
         val transitiveStarts = listOf(
             "to ", "make ", "cause ", "renounce ", "regard ", "solemnly ", "detest ",
@@ -407,21 +465,29 @@ object NaturalDialogueSynthesizer {
             "hide ", "reveal ", "expose ", "copy ", "imitate ", "replace ", "change ",
             "alter ", "combine ", "separate ", "divide ", "examine ", "inspect ",
             "verify ", "prove ", "disprove ", "challenge ", "question ", "ignore ",
-            "overlook ", "avoid ", "escape ", "abandon ", "surrender ", "seize ",
+            "overlook ", "avoid ", "abandon ", "surrender ", "seize ", "soak ",
             "take ", "give ", "offer ", "grant ", "deny ", "refuse ", "require ",
             "demand ", "force ", "compel ", "allow ", "permit ", "forbid ", "ban "
         )
 
-        if (lowerDef.startsWith("a ") || lowerDef.startsWith("an ") || lowerDef.startsWith("one who ")) {
-            return ExpressionGrammar.COUNTABLE_NOUN
+        if (lowerDef.startsWith("a ") || lowerDef.startsWith("an ") || lowerDef.startsWith("one who ") || lowerDef.startsWith("someone who ")) {
+            return if (SemanticIntentClassifier.isPersonNoun(clean, lowerDef)) {
+                ExpressionGrammar.PERSON_NOUN
+            } else {
+                ExpressionGrammar.THING_NOUN
+            }
         }
         if (intransitiveStarts.any { lowerDef.startsWith(it) }) {
             return ExpressionGrammar.INTRANSITIVE_VERB
         }
         if (transitiveStarts.any { lowerDef.startsWith(it) }) {
-            return ExpressionGrammar.TRANSITIVE_THING_VERB
+            return if (lowerDef.contains("someone") || lowerDef.contains("a person")) {
+                ExpressionGrammar.TRANSITIVE_PERSON_VERB
+            } else {
+                ExpressionGrammar.TRANSITIVE_THING_VERB
+            }
         }
-        if (lowerDef.startsWith("the ") || nounPrefixes.any { lowerDef.startsWith(it) }) {
+        if (nounPrefixes.any { lowerDef.startsWith(it) }) {
             return ExpressionGrammar.UNCOUNTABLE_NOUN
         }
         return when {
@@ -431,97 +497,78 @@ object NaturalDialogueSynthesizer {
                 lowerTerm.endsWith("ance") || lowerTerm.endsWith("ence") ||
                 lowerTerm.endsWith("acy") || lowerTerm.endsWith("itude") -> ExpressionGrammar.UNCOUNTABLE_NOUN
             lowerTerm.endsWith("ist") || (lowerTerm.endsWith("ant") && lowerDef.contains("person")) ->
-                ExpressionGrammar.COUNTABLE_NOUN
+                ExpressionGrammar.PERSON_NOUN
             lowerTerm.endsWith("ate") && lowerDef.startsWith("make") -> ExpressionGrammar.TRANSITIVE_THING_VERB
             else -> ExpressionGrammar.ADJECTIVE
         }
     }
 
     /**
-     * Wraps an existing hand-written bespoke example sentence in a natural 3-turn exchange
-     * with ZERO meta-linguistic commentary about wording, framing, or textbooks.
+     * Wraps a hand-written bespoke example sentence in a natural 3-turn exchange whose
+     * opener and closing reaction match the example's polarity/domain without clashing.
      */
     fun wrapBespokeExampleInDialogue(
         category: PhraseCategory,
         exampleLine: String,
-        hash: Int
+        hash: Int,
+        definition: String = ""
     ): List<DialogueTurn> {
         val speakers = if (category == PhraseCategory.WORKPLACE) workplaceSpeakers else everydaySpeakers
         val (speakerA, speakerB) = speakers[hash % speakers.size]
+        val intent = SemanticIntentClassifier.classifySemanticIntent(category, "", "$definition $exampleLine")
+        val polarity = SemanticIntentClassifier.classifyPolarity(intent, "$definition $exampleLine")
 
         val openers = when (category) {
             PhraseCategory.WORKPLACE -> listOf(
-                "How did the check-in with leadership go this morning?",
-                "Wait—any update after you talked to the client team?",
-                "Before we wrap up standup, where did we land on that?",
-                "How are we looking for Thursday's launch review?",
-                "Did finance get back to you on the Q4 numbers yet?"
+                "Quick check—where did things land on that?",
+                "Wait—what's the latest update before our afternoon sync?",
+                "Before we wrap up, how are we looking on that?",
+                "Did you get a chance to check in with the rest of the team?"
             )
             PhraseCategory.SLANG -> listOf(
-                "Wait, tell me everything—how did last night go?",
-                "Be honest, what actually happened after I left?",
-                "Hold on, did you end up going or staying in?",
-                "Okay, spill—what's the update?",
-                "No way—how did that turn out?"
+                "Wait, what's the story with that?",
+                "Be honest—what ended up happening?",
+                "Hold on, fill me in—what's the update?",
+                "Okay, spill—what's going on?"
             )
             PhraseCategory.IDIOM -> listOf(
-                "How are things shaking out with the new schedule?",
-                "Wait, what happened after you talked it over with them?",
-                "Sounds like a wild week—how's it looking now?",
-                "So what's your plan before Monday?",
-                "Did everything finally settle down over there?"
+                "How are things shaking out over there?",
+                "Wait, what happened after you talked it through?",
+                "Sounds like a lot—how's it looking now?",
+                "So where do things stand?"
             )
             PhraseCategory.PHRASAL_VERB -> listOf(
-                "Hey, did you get a chance to deal with that yet?",
-                "How did the rest of your afternoon end up going?",
-                "Wait—what happened after you called them back?",
-                "Are you still heading over there after work?",
-                "Any luck sorting that out before the weekend?"
+                "Hey, how did that end up shaking out?",
+                "Wait—what happened after you looked into it?",
+                "How did the rest of that go?",
+                "Any update on how that worked out?"
             )
             PhraseCategory.GRE_VOCAB -> listOf(
-                "Wait, what did you mean earlier when you brought that up over lunch?",
-                "Seriously? Fill me in on how that actually went down.",
-                "How did everyone react once that came out? I missed the whole thing.",
-                "You sounded pretty fired up about that earlier—what happened?",
-                "Did that really happen? Give me the short version before our next meeting."
+                "Wait, what happened earlier? I missed the first part.",
+                "Seriously? Give me the short version.",
+                "How did that actually go down?",
+                "You mentioned that earlier—what's the full story?"
             )
         }
 
-        val reactions = when (category) {
-            PhraseCategory.WORKPLACE -> listOf(
-                "Makes sense. Let's circle back after lunch once everyone's seen the doc.",
-                "Good call—I'll send a quick heads-up to design so they aren't surprised.",
-                "Got it. That definitely saves us a headache before Friday.",
-                "Fair enough. Ping me if you need another pair of eyes on it.",
-                "Totally with you—let's lock that in before noon."
+        val reactions = when (polarity) {
+            Polarity.POSITIVE -> listOf(
+                "Love to hear that—definitely sounds like it paid off.",
+                "Nice! That worked out way better than expected.",
+                "Honestly, that's awesome. Glad it came together.",
+                "Good call—sounds like the right move all around."
             )
-            PhraseCategory.SLANG -> listOf(
-                "Haha, no way—I would've reacted the exact same way.",
-                "Honestly, good for you. You needed a win this week.",
-                "Wait, seriously? Okay, tell me the rest over coffee.",
-                "Oof, I felt that. At least it's over now.",
-                "Fair enough—count me in next time."
+            Polarity.NEGATIVE -> listOf(
+                "Ugh, yeah—that's frustrating to deal with.",
+                "Oof, I don't blame you for feeling that way.",
+                "Yikes, good thing you spotted that early.",
+                "Yeah, that's rough. Hopefully it gets sorted out soon."
             )
-            PhraseCategory.IDIOM -> listOf(
-                "Honestly, I can't blame you at all.",
-                "Yeah, that makes a ton of sense now that I hear the whole story.",
-                "Good call—definitely let me know how it plays out next week.",
-                "Whoa, I didn't realize it had gotten that intense.",
-                "Right? Sometimes you just have to trust your gut on those."
-            )
-            PhraseCategory.PHRASAL_VERB -> listOf(
-                "Sounds like a solid plan—text me once you're done.",
-                "Whew, glad that didn't drag into the weekend.",
-                "Yeah, good call handling it now instead of waiting.",
-                "Let me know if you want a hand with that later.",
-                "Nice—glad it all worked out in the end."
-            )
-            PhraseCategory.GRE_VOCAB -> listOf(
-                "Honestly, that explains so much—I would've had the exact same reaction.",
-                "Whoa, no wonder people were still talking about it this morning.",
-                "Haha, yeah, I can totally picture that happening.",
-                "Good point. Definitely glad you gave me the heads-up.",
-                "Wait, really? Keep me posted on what they decide."
+            Polarity.NEUTRAL -> listOf(
+                "Makes total sense now that I hear the whole context.",
+                "Got it—thanks for filling me in.",
+                "Fair enough. Definitely keep me posted on how it goes.",
+                "Yeah, that tracks. Let me know what happens next."
             )
         }
 
@@ -534,413 +581,38 @@ object NaturalDialogueSynthesizer {
 
     /**
      * Builds a realistic 3-turn lesson dialogue for compact 5-column entries across ALL 5 categories.
-     * The target word/phrase is spoken directly inside natural American grammar—never quoted or lectured about.
+     * Routes by BOTH grammatical slot AND semantic intent/polarity so the conversation
+     * always reinforces the word's true meaning and never evokes a different word.
      */
     fun buildNaturalLessonDialogue(
         category: PhraseCategory,
         term: String,
         definition: String,
-        hash: Int
+        hash: Int,
+        synonyms: List<String> = emptyList()
     ): List<DialogueTurn> {
         val clean = cleanTerm(term)
         val grammar = classifyGrammar(category, clean, definition)
+        val intent = SemanticIntentClassifier.classifySemanticIntent(category, clean, definition, synonyms)
+        val polarity = SemanticIntentClassifier.classifyPolarity(intent, definition)
+        val spoken = SemanticIntentClassifier.inflectForSpeech(clean, secondPerson = true)
+        val spokenThird = SemanticIntentClassifier.inflectForSpeech(clean, secondPerson = false)
         val speakers = if (category == PhraseCategory.WORKPLACE) workplaceSpeakers else everydaySpeakers
         val (speakerA, speakerB) = speakers[hash % speakers.size]
-        val usesSecondPerson = clean.lowercase(Locale.US).let { it.contains("your") || it.contains("yourself") }
+        val usesSecondPerson = spoken.lowercase(Locale.US).let { it.contains("your") || it.contains("yourself") }
 
-        val vignettes: List<Triple<String, String, String>> = when (grammar) {
-            ExpressionGrammar.STANDALONE_REACTION -> {
-                val cap = clean.replaceFirstChar { it.uppercase(Locale.US) }
-                listOf(
-                    Triple(
-                        "Want to grab tacos by the park once we wrap up at five?",
-                        "$cap—just text me when you're heading out the door.",
-                        "Awesome, see you at the corner in a bit."
-                    ),
-                    Triple(
-                        "I'm telling you, that new ramen place on 4th is worth the twenty-minute wait.",
-                        "$cap? Alright, let's check it out Friday night.",
-                        "Deal—I'll put our names down early so we don't starve."
-                    ),
-                    Triple(
-                        "Wait, did you actually finish the whole deck before lunch?",
-                        "$cap—had to skip my morning walk, though.",
-                        "Respect. Go grab yourself a real break."
-                    )
-                )
-            }
+        val vignettes = pickLessonVignettes(
+            category = category,
+            grammar = grammar,
+            intent = intent,
+            polarity = polarity,
+            clean = clean,
+            spoken = spoken,
+            spokenThird = spokenThird,
+            usesSecondPerson = usesSecondPerson
+        )
 
-            ExpressionGrammar.PAST_VERB_PHRASE -> listOf(
-                Triple(
-                    "Did you catch Maya's set at the open mic last night?",
-                    "Yeah, we sat right up front—she honestly $clean and had the whole room cheering.",
-                    "Ugh, so mad I missed it! Tell me someone got a video."
-                ),
-                Triple(
-                    "How did your presentation go with the regional directors?",
-                    "Way better than I expected—Jordan stepped in on the Q&A and totally $clean.",
-                    "Nice! You guys earned an early Friday after that."
-                ),
-                Triple(
-                    "Wait, how was your sister's audition this morning?",
-                    "She just texted me from the train—she $clean and already got a callback.",
-                    "No way! Tell her congrats for me."
-                )
-            )
-
-            ExpressionGrammar.TRANSITIVE_PERSON_VERB -> listOf(
-                Triple(
-                    "Have you heard from Alex since they switched teams last month?",
-                    "Yeah, I ran into Sam at coffee and made sure to $clean him before the meeting.",
-                    "Good call—tell him I said hi next time you catch up."
-                ),
-                Triple(
-                    "Think our new neighbor is settling in okay?",
-                    "Seems like it! It took a couple tries to $clean them, but we chatted for twenty minutes on the porch.",
-                    "Love that—always nice actually knowing the people on your block."
-                ),
-                Triple(
-                    "How did you handle that awkward mix-up with the vendor?",
-                    "I jumped on a quick call to $clean her directly instead of letting emails pile up.",
-                    "Smart move. A five-minute call beats ten emails every time."
-                )
-            )
-
-            ExpressionGrammar.TRANSITIVE_THING_VERB -> if (category == PhraseCategory.WORKPLACE) {
-                listOf(
-                    Triple(
-                        "Are we ready to share the roadmap with engineering tomorrow?",
-                        "Almost—I still need to $clean the final timeline before we send out the invite.",
-                        "Got it. Ping me when it's ready and I'll give it a quick read."
-                    ),
-                    Triple(
-                        "Did legal raise any flags on the partner agreement?",
-                        "Just one small section—we're meeting at two to $clean the wording before sign-off.",
-                        "Sounds clean. Glad we caught it ahead of the deadline."
-                    ),
-                    Triple(
-                        "How are we handling the extra requests from the pilot accounts?",
-                        "Let's $clean the backlog first so nobody gets stretched too thin this sprint.",
-                        "Totally agree—better to ship three things cleanly than rush six."
-                    )
-                )
-            } else {
-                listOf(
-                    Triple(
-                        "Any chance we can wrap this up before dinner?",
-                        "Yeah, give me twenty minutes to $clean the last few things and I'm ready to head out.",
-                        "Take your time—I'll grab our coats and call the ride."
-                    ),
-                    Triple(
-                        "Why did everyone get so quiet when Alex brought up the old policy?",
-                        "Because nobody expected leadership to $clean it right in the middle of the Q&A.",
-                        "Oof, yeah, that definitely shifted the energy in the room."
-                    ),
-                    Triple(
-                        "Did the new documentary actually change your mind on the case?",
-                        "Kind of! The third episode digs up interviews that really $clean the official story.",
-                        "Okay, now I have to watch it tonight—don't spoil the ending."
-                    ),
-                    Triple(
-                        "How did your conversation with the landlord go after the repair delay?",
-                        "Honestly, they tried to $clean the issue at first, so I sent over the photos and dates.",
-                        "Good for you for keeping receipts—that usually gets things moving fast."
-                    )
-                )
-            }
-
-            ExpressionGrammar.COMPLETE_VERB_PHRASE -> if (usesSecondPerson) {
-                listOf(
-                    Triple(
-                        "I feel awful about the typo in yesterday's client email—should I offer to step off the account?",
-                        "Whoa, slow down—you really don't need to $clean over one tiny mistake.",
-                        "Fair point. I'll just send a quick correction and move on."
-                    ),
-                    Triple(
-                        "Should we tell them our exact budget ceiling right at the start of the call?",
-                        "Wait a bit—you don't want to $clean before hearing what they're actually offering.",
-                        "Good call. Let's listen first and see where they land."
-                    ),
-                    Triple(
-                        "I've been staying up till 1 a.m. and waking up at 6 to finish this remodel.",
-                        "You can't keep going like that—if you $clean all month, you're going to wipe out.",
-                        "Yeah, you're right. I'm taking Sunday completely off."
-                    )
-                )
-            } else if (category == PhraseCategory.WORKPLACE) {
-                listOf(
-                    Triple(
-                        "This side question about next year's pricing is eating up our whole standup.",
-                        "Good catch—let's $clean for now and pick it back up in Thursday's sync.",
-                        "Sounds good. That keeps us on track for the demo."
-                    ),
-                    Triple(
-                        "We've spent three sprints on that experiment and adoption still hasn't budged.",
-                        "Honestly, it might be time to $clean and put those engineers back on onboarding.",
-                        "Tough call, but the numbers make it pretty clear."
-                    ),
-                    Triple(
-                        "How are we making sure leadership doesn't get blindsided in Friday's review?",
-                        "I set up quick fifteen-minute chats tomorrow so we can $clean ahead of time.",
-                        "Smart—way better than debating everything live in front of twenty people."
-                    )
-                )
-            } else {
-                listOf(
-                    Triple(
-                        "We've got ten minutes before the concert starts and traffic just cleared up.",
-                        "Alright, buckle up—I'm gonna $clean so we don't miss the opening song.",
-                        "Haha, just don't get us pulled over!"
-                    ),
-                    Triple(
-                        "Think we should wait until Monday to bring up the schedule conflict?",
-                        "Nah, better to $clean right now before everyone books their flights.",
-                        "True—ripping off the bandage early saves everyone a headache."
-                    ),
-                    Triple(
-                        "How'd you handle that awkward silence at the start of the workshop?",
-                        "I cracked a quick joke about the broken coffee machine to $clean, and everyone relaxed.",
-                        "Classic move—nothing bonds a room faster than bad office coffee."
-                    )
-                )
-            }
-
-            ExpressionGrammar.INTRANSITIVE_VERB -> listOf(
-                Triple(
-                    "Is the rain still coming down sideways? I left my jacket at home.",
-                    "Yeah, it's wild out there, though the forecast says it should $clean in about twenty minutes.",
-                    "Perfect—gives me an excuse to grab one more coffee before walking back."
-                ),
-                Triple(
-                    "Wait, did that whole online argument already blow over?",
-                    "Pretty much—these things spike for two days and then $clean as soon as the next headline drops.",
-                    "So true. Everybody moves on in 48 hours."
-                ),
-                Triple(
-                    "Think the team will push back on moving the launch to Tuesday?",
-                    "They grumbled a bit at standup, but everyone will probably $clean once they realize it saves their weekend.",
-                    "Totally—nobody wants to push code on a Friday evening anyway."
-                ),
-                Triple(
-                    "How's your brother doing since moving out to Chicago?",
-                    "The first month was a whirlwind, though things are starting to $clean now that he found his routine.",
-                    "Love hearing that—winter's gonna be the real test, though!"
-                )
-            )
-
-            ExpressionGrammar.PREPOSITIONAL_STATE -> if (usesSecondPerson) {
-                listOf(
-                    Triple(
-                        "Sorry I missed your text—between taxes and the apartment move, this week's been chaos.",
-                        "No worries at all, sounds like you're $clean right now—let's catch up next week.",
-                        "Appreciate it! Coffee's on me once the boxes are unpacked."
-                    ),
-                    Triple(
-                        "Do you think I should volunteer to organize the neighborhood block party too?",
-                        "Honestly, you're already $clean with the new job—let somebody else run that one.",
-                        "Yeah, you're probably right. I need to stop saying yes to everything."
-                    )
-                )
-            } else {
-                listOf(
-                    Triple(
-                        "How did the catering team handle the last-minute guest count jump?",
-                        "They honestly went $clean—brought extra trays and didn't even charge a rush fee.",
-                        "Whoa, save their number. We're definitely hiring them again."
-                    ),
-                    Triple(
-                        "Wait, why'd you leave the group chat so suddenly last night?",
-                        "Because by midnight I was $clean with everyone arguing over a restaurant pick.",
-                        "Haha, fair—thirty messages just to end up at the same pizza spot."
-                    ),
-                    Triple(
-                        "Are you leaning toward taking the Austin offer or staying put?",
-                        "Still $clean, honestly—both have big pros and I need the weekend to sleep on it.",
-                        "Take your time. Happy to talk through the math over lunch tomorrow."
-                    ),
-                    Triple(
-                        "How's the new apartment hunting going in that neighborhood?",
-                        "Pretty wild—everything good goes fast, so we have to stay $clean just to book a tour.",
-                        "Ugh, moving season is brutal. Let me know if you spot anything near the train."
-                    )
-                )
-            }
-
-            ExpressionGrammar.ADJECTIVE -> if (category == PhraseCategory.WORKPLACE) {
-                listOf(
-                    Triple(
-                        "Can your team squeeze in the analytics refresh before Friday?",
-                        "We're a little $clean this sprint, so the earliest we can pick it up is next Wednesday.",
-                        "Totally fair—I'll update the milestone tracker so everyone's aligned."
-                    ),
-                    Triple(
-                        "Did procurement sign off on the new agency contract?",
-                        "Yep, everything in their audit came back $clean, so we're good to kick off Monday.",
-                        "Awesome—I'll send over the onboarding brief this afternoon."
-                    ),
-                    Triple(
-                        "Got five minutes to walk through the slide deck before 2 p.m.?",
-                        "I'm $clean until four, but let's grab ten minutes right after my client call.",
-                        "Works for me—I'll drop a quick hold on your calendar."
-                    )
-                )
-            } else {
-                listOf(
-                    Triple(
-                        "Did you end up listening to that podcast episode I sent over?",
-                        "Yeah, on my commute—the host's take got surprisingly $clean in the second half once they dug into the backstory.",
-                        "Right? I wasn't expecting them to go there, but I couldn't stop listening."
-                    ),
-                    Triple(
-                        "How's this month's book club pick? Worth starting before Thursday?",
-                        "Honestly, I'm hooked, though the middle chapters get a little $clean if you're reading past midnight.",
-                        "Good call—I'll save those chapters for Saturday morning coffee instead."
-                    ),
-                    Triple(
-                        "How did the client check-in go? You looked way more relaxed walking out.",
-                        "Way better than I thought. Their VP seemed $clean at the start, so I braced myself, then we clicked on the timeline.",
-                        "Nice! Nothing beats turning around a tough room like that."
-                    ),
-                    Triple(
-                        "Did you catch the clips from last night's neighborhood town hall?",
-                        "Yeah, over breakfast—the whole Q&A got weirdly $clean the second the zoning map went up.",
-                        "Classic local politics. At least they finally agreed on the bike lane."
-                    ),
-                    Triple(
-                        "Wait, how was your flight back from Denver?",
-                        "Totally fine until the gate change—then the whole boarding line went $clean for twenty minutes.",
-                        "Ugh, airport chaos is the worst. Glad you made it home okay."
-                    )
-                )
-            }
-
-            ExpressionGrammar.DETERMINER_NOUN -> listOf(
-                Triple(
-                    "Why did so many extra teams suddenly ask to join our pilot launch?",
-                    "Because once something gets traction, everybody wants $clean.",
-                    "Haha, true—nobody volunteered when it was just a messy spreadsheet."
-                ),
-                Triple(
-                    "Are you turning down the startup equity offer to keep your current role?",
-                    "Honestly, yeah—I'm sticking with $clean while the market's this unpredictable.",
-                    "Makes total sense. Stability's underrated right now."
-                ),
-                Triple(
-                    "Wait, how did a simple lunch order turn into an hour-long debate?",
-                    "No idea, man—one comment about delivery fees and suddenly it was $clean.",
-                    "Classic office lunch. Next time we're just walking to the deli."
-                )
-            )
-
-            ExpressionGrammar.DEFINITE_NOUN -> listOf(
-                Triple(
-                    "How did the shift swap end up working out for you?",
-                    "Not great—I somehow got the $clean and ended up closing both Friday and Saturday.",
-                    "Oof, they definitely owe you next weekend off."
-                ),
-                Triple(
-                    "What's holding up the apartment lease renewal?",
-                    "Parking spots have been the $clean since day one—nobody wants to budge.",
-                    "Hope they meet you halfway so you don't have to move."
-                ),
-                Triple(
-                    "Are we still on schedule for the beta release?",
-                    "Only if design signs off today—that checkout screen is right on the $clean.",
-                    "Got it. I'll check in with Priya right after lunch."
-                )
-            )
-
-            ExpressionGrammar.COUNTABLE_NOUN -> {
-                val art = articleFor(clean)
-                if (category == PhraseCategory.WORKPLACE) {
-                    listOf(
-                        Triple(
-                            "What came out of yesterday's customer interviews?",
-                            "We pulled $art solid $clean from the checkout recordings—way clearer than the survey data.",
-                            "Nice! Drop that into Monday's deck before leadership sees it."
-                        ),
-                        Triple(
-                            "Why did engineering push back on copying the old signup flow?",
-                            "They flagged it as $art classic $clean that'll slow down every release down the road.",
-                            "Fair enough—glad they spoke up before we built it."
-                        ),
-                        Triple(
-                            "What's the next step before we pick a new analytics vendor?",
-                            "Procurement's sending out $art formal $clean next week so all three vendors quote the same scope.",
-                            "Smart—makes comparing pricing way easier."
-                        )
-                    )
-                } else {
-                    listOf(
-                        Triple(
-                            "Did you see how everyone reacted to Maya's talk at the meetup last night?",
-                            "Oh yeah—the whole Q&A turned into $art full-blown $clean, and people were still buzzing in the lobby.",
-                            "Wish I hadn't missed it! Let me know if they post the recording."
-                        ),
-                        Triple(
-                            "How did your sister handle the five-hour flight delay with two toddlers?",
-                            "She was $art total $clean—kept them laughing the whole time and didn't lose her cool once.",
-                            "Honestly, superhuman. Buy her a giant coffee next time you see her."
-                        ),
-                        Triple(
-                            "Still up for hanging out for another half hour before heading home?",
-                            "Sure—let's grab $art quick $clean at that corner place and call it a night.",
-                            "Sounds perfect. I'll grab us a booth by the window."
-                        ),
-                        Triple(
-                            "Have you read that Sunday profile on the retired neighborhood architect?",
-                            "Yeah, twice—her neighbors describe her as $art $clean who somehow got the whole block behind the park redesign.",
-                            "Send me the link! That's the exact kind of story I love reading with coffee."
-                        )
-                    )
-                }
-            }
-
-            ExpressionGrammar.UNCOUNTABLE_NOUN -> if (category == PhraseCategory.WORKPLACE) {
-                listOf(
-                    Triple(
-                        "What are we focusing on in tomorrow's leadership offsite?",
-                        "Mostly sharpening our $clean before Q4 budgets get locked.",
-                        "Good call—that's the piece everyone had questions about last quarter."
-                    ),
-                    Triple(
-                        "Did anyone type up a summary from the client workshop?",
-                        "Yep, I just shared the $clean in the project channel a minute ago.",
-                        "Awesome, thanks for turning that around so fast."
-                    ),
-                    Triple(
-                        "How did the new team boost signups without raising ad spend?",
-                        "They leaned hard into $clean instead of buying another round of billboards.",
-                        "Impressive—let's ask them to walk us through what worked."
-                    )
-                )
-            } else {
-                listOf(
-                    Triple(
-                        "How did the joint planning meeting feel from your side of the table?",
-                        "Honestly, you could feel the $clean in the room the second both teams sat down.",
-                        "Oof—hopefully once the details settle, everyone loosens up a bit."
-                    ),
-                    Triple(
-                        "What made you trust their founder so quickly during the interview?",
-                        "It was her $clean—she didn't dodge a single tough question about the rough quarters.",
-                        "That's rare. Usually people just spin things instead of leveling with you."
-                    ),
-                    Triple(
-                        "I'm surprised how smoothly your parents handled the flight cancellation.",
-                        "Same! They took the whole mess with surprising $clean and ended up finding an awesome ramen spot near the hotel.",
-                        "Honestly, goals. I would've been stressing at the gate."
-                    ),
-                    Triple(
-                        "Wait, how are you still wide awake after driving six hours straight?",
-                        "Pure iced coffee and $clean—plus a really good playlist.",
-                        "Haha, fair enough. Get some real sleep tonight, though."
-                    )
-                )
-            }
-        }
-
-        val (turn1, turn2, turn3) = vignettes[hash % vignettes.size]
+        val (turn1, turn2, turn3) = vignettes[abs(hash) % vignettes.size]
         return listOf(
             DialogueTurn(speakerA, turn1),
             DialogueTurn(speakerB, turn2),
@@ -949,249 +621,42 @@ object NaturalDialogueSynthesizer {
     }
 
     /**
-     * Generates a BRAND-NEW unseen spoken conversation for True Transfer Learning (distinct from lesson dialogue).
-     * Never uses meta-linguistic templates like "I'd call it ___" or "captures that best".
+     * Generates a BRAND-NEW unseen spoken conversation for True Transfer Learning
+     * (strictly distinct from lesson dialogues, matched to exact grammar AND semantic intent).
      */
     fun buildTransferScene(
         category: PhraseCategory,
         term: String,
         definition: String,
-        seed: Int
+        seed: Int,
+        synonyms: List<String> = emptyList()
     ): TransferScene {
         val clean = cleanTerm(term)
         val grammar = classifyGrammar(category, clean, definition)
-        val (speakerA, speakerB) = transferSpeakers[seed % transferSpeakers.size]
-        val usesSecondPerson = clean.lowercase(Locale.US).let { it.contains("your") || it.contains("yourself") }
+        val intent = SemanticIntentClassifier.classifySemanticIntent(category, clean, definition, synonyms)
+        val polarity = SemanticIntentClassifier.classifyPolarity(intent, definition)
+        val spoken = SemanticIntentClassifier.inflectForSpeech(clean, secondPerson = true)
+        val spokenThird = SemanticIntentClassifier.inflectForSpeech(clean, secondPerson = false)
+        val (speakerA, speakerB) = transferSpeakers[abs(seed) % transferSpeakers.size]
+        val usesSecondPerson = spoken.lowercase(Locale.US).let { it.contains("your") || it.contains("yourself") }
 
-        val blank = "________"
+        val templates = pickTransferTemplates(
+            category = category,
+            grammar = grammar,
+            intent = intent,
+            polarity = polarity,
+            clean = clean,
+            spoken = spoken,
+            spokenThird = spokenThird,
+            usesSecondPerson = usesSecondPerson
+        )
 
-        // Each triple is (domainLabel, leadLine, replyTemplateWithPlaceholder "%s")
-        val templates: List<Triple<String, String, String>> = when (grammar) {
-            ExpressionGrammar.STANDALONE_REACTION -> listOf(
-                Triple(
-                    "Group Chat",
-                    "Are we still meeting at the coffee shop on Main at nine?",
-                    "%s—I'm grabbing my keys right now."
-                ),
-                Triple(
-                    "Post-Game Walk",
-                    "Tell me that wasn't the wildest overtime finish all season.",
-                    "%s—I still can't believe that last shot went in."
-                )
-            )
-
-            ExpressionGrammar.PAST_VERB_PHRASE -> listOf(
-                Triple(
-                    "Brunch Catchup",
-                    "How did Devon's keynote go at the conference?",
-                    "Seriously, he walked up without notes and completely %s."
-                ),
-                Triple(
-                    "Coffee Run",
-                    "Did your cousin's band survive the outdoor festival rain?",
-                    "Better than survived—they kept playing and honestly %s."
-                )
-            )
-
-            ExpressionGrammar.TRANSITIVE_PERSON_VERB -> listOf(
-                Triple(
-                    "Commute Call",
-                    "Did you ever hear back from your old mentor in Boston?",
-                    "Yeah, I called to %s her on my drive home and we talked for half an hour."
-                ),
-                Triple(
-                    "Office Kitchen",
-                    "How's the new analyst settling in after their first week?",
-                    "Pretty well—I stopped by to %s him before lunch and he's already rolling."
-                )
-            )
-
-            ExpressionGrammar.TRANSITIVE_THING_VERB -> listOf(
-                Triple(
-                    "Client Call",
-                    "Should we wait until Monday to fix the onboarding hiccup?",
-                    "Better to %s it this afternoon while the whole team's still online."
-                ),
-                Triple(
-                    "Editorial Desk",
-                    "This opening section still feels cluttered before the chart.",
-                    "Agreed—let's %s the first two paragraphs before we send it to layout."
-                ),
-                Triple(
-                    "Road Trip",
-                    "Wait, did we check the cabin booking before leaving town?",
-                    "Yep, I called the host at noon to %s everything so we don't hit surprises."
-                )
-            )
-
-            ExpressionGrammar.COMPLETE_VERB_PHRASE -> if (usesSecondPerson) {
-                listOf(
-                    Triple(
-                        "Coffee Catchup",
-                        "I'm tempted to take all the blame for the shipping delay even though the vendor missed the date.",
-                        "Come on, don't %s when it wasn't even your fault."
-                    ),
-                    Triple(
-                        "Evening Walk",
-                        "Should I tell the recruiter my exact competing number on the first screen?",
-                        "Hold off—you don't want to %s before they even confirm the level."
-                    )
-                )
-            } else {
-                listOf(
-                    Triple(
-                        "Team Standup",
-                        "This side thread about next quarter's swag budget is eating our whole sync.",
-                        "Let's %s for now and finish the release checklist first."
-                    ),
-                    Triple(
-                        "Airport Gate",
-                        "Boarding starts in ten minutes and we're still stuck behind slow walkers.",
-                        "Grab your bag—we might actually have to %s to make Group 2."
-                    ),
-                    Triple(
-                        "Client Debrief",
-                        "We've poured six weeks into that ad channel with zero lift.",
-                        "Honestly, we should just %s and move the budget to referrals."
-                    )
-                )
-            }
-
-            ExpressionGrammar.INTRANSITIVE_VERB -> listOf(
-                Triple(
-                    "Commute Call",
-                    "Are you still stuck in that downtown concert traffic?",
-                    "Yeah, bumper-to-bumper—I'm grabbing a taco until the rush starts to %s."
-                ),
-                Triple(
-                    "Weekend Hike",
-                    "Think we should wait out these gusts before heading up the ridge?",
-                    "Good idea—the trail report said the wind should %s right around three."
-                ),
-                Triple(
-                    "Slack DM",
-                    "Are people still stressing over the office seating shuffle?",
-                    "A couple folks vented this morning, but it'll %s by Thursday once everyone settles in."
-                )
-            )
-
-            ExpressionGrammar.PREPOSITIONAL_STATE -> if (usesSecondPerson) {
-                listOf(
-                    Triple(
-                        "Weekend Text",
-                        "Sorry for the late reply—packing for the move plus client deadlines wiped me out.",
-                        "No stress at all, sounds like you're %s this week—let's grab dinner once you settle."
-                    )
-                )
-            } else {
-                listOf(
-                    Triple(
-                        "Dinner Table",
-                        "Did the mechanic charge extra for staying past closing to finish your brakes?",
-                        "Not a dime—they went %s so I could still make my road trip."
-                    ),
-                    Triple(
-                        "Podcast Chat",
-                        "Are you switching to the new neighborhood gym or keeping your old membership?",
-                        "Still %s—the new spot's closer, though the pool at my old place is hard to beat."
-                    ),
-                    Triple(
-                        "Team Retro",
-                        "How did support handle that surprise traffic spike on Sunday night?",
-                        "Honestly, everyone stayed %s and cleared the queue before Monday morning."
-                    )
-                )
-            }
-
-            ExpressionGrammar.ADJECTIVE -> listOf(
-                Triple(
-                    "Book Club",
-                    "What did you think of the memoir's final three chapters?",
-                    "I loved the opening, though the author's tone turned weirdly %s near the end."
-                ),
-                Triple(
-                    "Client Sync",
-                    "Can design take on the extra landing page before Thursday's launch?",
-                    "We're a bit %s right now, so let's slate that for next Tuesday instead."
-                ),
-                Triple(
-                    "Coffee Shop",
-                    "How did your neighbor react when the HOA changed the parking rules?",
-                    "Way more %s than anyone expected—they didn't hold back at the meeting."
-                )
-            )
-
-            ExpressionGrammar.DETERMINER_NOUN -> listOf(
-                Triple(
-                    "Lunch Break",
-                    "Why is every department suddenly asking for a seat on our pilot?",
-                    "Because once a project starts paying off, everybody wants %s."
-                ),
-                Triple(
-                    "Phone Call",
-                    "So you're keeping the steady consulting retainer instead of chasing that vague startup pitch?",
-                    "Yep—I'm going with %s this year."
-                )
-            )
-
-            ExpressionGrammar.DEFINITE_NOUN -> listOf(
-                Triple(
-                    "Team Retro",
-                    "Why did the mobile build slip by two days?",
-                    "That payment screen was sitting right on the %s and blocked QA."
-                ),
-                Triple(
-                    "Dinner Banter",
-                    "How did splitting the cabin rooms end up going?",
-                    "We arrived last, so we definitely got the %s right next to the loud fridge."
-                )
-            )
-
-            ExpressionGrammar.COUNTABLE_NOUN -> {
-                val art = articleFor(clean)
-                listOf(
-                    Triple(
-                        "Newsroom Edit",
-                        "Why did you cut that entire paragraph from the feature draft?",
-                        "Our fact-checker flagged it as $art classic %s that distracted from the real story."
-                    ),
-                    Triple(
-                        "Weekend Brunch",
-                        "Wait, your dad still drove everyone to the trailhead after twisting his ankle?",
-                        "Seriously, he's $art total %s—refused to let us cancel the trip."
-                    ),
-                    Triple(
-                        "Product Review",
-                        "Did anything jump out from last week's user testing sessions?",
-                        "Yeah, we uncovered $art huge %s right on the first onboarding screen."
-                    )
-                )
-            }
-
-            ExpressionGrammar.UNCOUNTABLE_NOUN -> listOf(
-                Triple(
-                    "Executive Sync",
-                    "What's the main focus before next quarter's partner pitch?",
-                    "Dialing in our %s so buyers immediately see what sets us apart."
-                ),
-                Triple(
-                    "Post-Meeting Walk",
-                    "How did the budget conversation go with the new VP?",
-                    "Honestly, I appreciated her %s—she laid out the real constraints without sugarcoating."
-                ),
-                Triple(
-                    "Coffee Run",
-                    "How are you surviving a double shift after barely sleeping?",
-                    "Cold brew, good music, and pure %s."
-                )
-            )
-        }
-
-        val (domain, lead, replyTpl) = templates[abs(seed) % templates.size]
+        val (domain, lead, replyPair) = templates[abs(seed) % templates.size]
+        val (replyTpl, surfaceForm) = replyPair
         val formattedTerm = if (replyTpl.startsWith("%s")) {
-            clean.replaceFirstChar { it.uppercase(Locale.US) }
+            surfaceForm.replaceFirstChar { it.uppercase(Locale.US) }
         } else {
-            clean
+            surfaceForm
         }
         return TransferScene(
             domainLabel = domain,
@@ -1199,8 +664,1238 @@ object NaturalDialogueSynthesizer {
             speakerB = speakerB,
             leadLine = lead,
             replyWithTarget = replyTpl.replace("%s", formattedTerm),
-            replyWithBlank = replyTpl.replace("%s", blank)
+            replyWithBlank = replyTpl.replace("%s", "________")
         )
+    }
+
+    private fun pickLessonVignettes(
+        category: PhraseCategory,
+        grammar: ExpressionGrammar,
+        intent: SemanticIntent,
+        polarity: Polarity,
+        clean: String,
+        spoken: String,
+        spokenThird: String,
+        usesSecondPerson: Boolean
+    ): List<Triple<String, String, String>> {
+        val lower = clean.lowercase(Locale.US)
+        val cap = spoken.replaceFirstChar { it.uppercase(Locale.US) }
+        val art = articleFor(spoken)
+        val artThird = articleFor(spokenThird)
+
+        return when (grammar) {
+            ExpressionGrammar.STANDALONE_REACTION -> when {
+                lower in negativeReactionTerms || polarity == Polarity.NEGATIVE -> listOf(
+                    Triple(
+                        "Did you see that someone accidentally replied-all to the entire company thread?",
+                        "$cap—I would've closed my laptop and walked straight outside.",
+                        "Seriously, my stomach dropped just reading it."
+                    ),
+                    Triple(
+                        "They're asking us to drive three hours each way for a twenty-minute check-in.",
+                        "$cap—let's ask if we can just jump on a quick video call instead.",
+                        "Right? No way is that worth six hours in traffic."
+                    )
+                )
+                lower in neutralReactionTerms -> listOf(
+                    Triple(
+                        "I know it sounds ambitious, but I'm going to see how the first month shakes out.",
+                        "$cap—you'll have a much clearer read once you're actually in it.",
+                        "True. One week at a time."
+                    ),
+                    Triple(
+                        "Honestly, I'd rather take the slower scenic train than deal with airport security.",
+                        "$cap—everyone's got their own travel rhythm.",
+                        "Exactly. Give me a window seat and coffee any day."
+                    )
+                )
+                else -> listOf(
+                    Triple(
+                        "Want to grab tacos by the park once we wrap up at five?",
+                        "$cap—just text me when you're heading out the door.",
+                        "Awesome, see you at the corner in a bit."
+                    ),
+                    Triple(
+                        "That new spot on 4th is way better than the old one downtown.",
+                        "$cap—we went last Friday and ordered way too much food.",
+                        "Haha, I'm already sold. Let's go next week."
+                    )
+                )
+            }
+
+            ExpressionGrammar.PAST_VERB_PHRASE -> if (polarity == Polarity.NEGATIVE) {
+                listOf(
+                    Triple(
+                        "How did the live demo go after the Wi-Fi cut out?",
+                        "Rough—we totally $spokenThird on the second half, so we're rescheduling a clean walkthrough.",
+                        "Ugh, tech glitches are the worst. Next run will go way smoother."
+                    ),
+                    Triple(
+                        "Did everything stay on track with the vendor handoff?",
+                        "Not really—they $spokenThird right before the deadline, so we had to scramble.",
+                        "That's frustrating. Good thing you caught it before Monday."
+                    )
+                )
+            } else {
+                listOf(
+                    Triple(
+                        "Did you catch Maya's set at the open mic last night?",
+                        "Yeah, we sat right up front—she honestly $spokenThird and had the whole room cheering.",
+                        "Ugh, so mad I missed it! Tell me someone got a video."
+                    ),
+                    Triple(
+                        "How did your presentation go with the regional directors?",
+                        "Way better than I expected—Jordan stepped in on Q&A and totally $spokenThird.",
+                        "Nice! You guys earned an early Friday after that."
+                    )
+                )
+            }
+
+            ExpressionGrammar.TRANSITIVE_PERSON_VERB -> when (intent) {
+                SemanticIntent.OPPOSE_BLOCK, SemanticIntent.CRITICISM_NEGATIVE -> listOf(
+                    Triple(
+                        "Why did Sam walk out of that group chat so abruptly?",
+                        "Because everyone kept piling on and trying to $spoken him instead of hearing him out.",
+                        "Oof, no wonder he muted the thread."
+                    ),
+                    Triple(
+                        "Are they still returning your messages after the disagreement?",
+                        "Nope—they decided to $spoken me right after I asked for a straight answer.",
+                        "That's rough. Some people really hate awkward conversations."
+                    )
+                )
+                SemanticIntent.SUPPORT_COLLABORATE, SemanticIntent.PRAISE_POSITIVE -> listOf(
+                    Triple(
+                        "How's the new teammate holding up before her first big presentation?",
+                        "She was a little nervous, so I grabbed coffee to $spoken her before the meeting.",
+                        "That's huge—having someone in your corner makes all the difference."
+                    ),
+                    Triple(
+                        "Did you get a chance to catch up with Devon after the promotion?",
+                        "Yeah, we met up at lunch so I could $spoken him properly.",
+                        "Love that—he's been working toward that for months."
+                    )
+                )
+                SemanticIntent.COMMUNICATION_SPEECH -> listOf(
+                    Triple(
+                        "Did you talk to Alex after the announcement went out?",
+                        "Yeah, I pulled him aside for five minutes to $spoken him before rumors started.",
+                        "Good move—hearing it directly is always better."
+                    )
+                )
+                else -> listOf(
+                    Triple(
+                        "How did you handle that situation with the vendor lead?",
+                        "I hopped on a quick call to $spoken her directly instead of letting emails drag on.",
+                        "Smart call—a quick conversation usually clears things up faster."
+                    ),
+                    Triple(
+                        "Have you caught up with Jordan since the team shuffle?",
+                        "Yeah, I stopped by his desk before lunch to $spoken him.",
+                        "Nice—glad you two got a minute to connect."
+                    )
+                )
+            }
+
+            ExpressionGrammar.TRANSITIVE_THING_VERB -> when (intent) {
+                SemanticIntent.REDUCE_LESSEN -> listOf(
+                    Triple(
+                        "Is there any way to calm down the backlash before tomorrow's meeting?",
+                        "Sending a clear, honest update tonight should $spoken the tension right away.",
+                        "Agreed—better to address it head-on now."
+                    ),
+                    Triple(
+                        "This onboarding flow still feels way too heavy for first-time users.",
+                        "Let's $spoken the extra steps so people can finish in under a minute.",
+                        "Smart—simpler is almost always better."
+                    )
+                )
+                SemanticIntent.INCREASE_GROW -> listOf(
+                    Triple(
+                        "Should we post a hasty reply to those angry comments right now?",
+                        "Definitely not—rushing out a defensive answer will only $spoken the problem.",
+                        "Good point. Let's take a breath and get the facts straight first."
+                    ),
+                    Triple(
+                        "What happened when they layered two more approvals onto the process?",
+                        "It managed to $spoken the delays across every single department.",
+                        "Oof—classic unintended consequence."
+                    )
+                )
+                SemanticIntent.OPPOSE_BLOCK, SemanticIntent.CRITICISM_NEGATIVE -> listOf(
+                    Triple(
+                        "Did leadership end up approving that rushed policy change?",
+                        "No—the review board voted to $spoken the proposal as soon as they saw the numbers.",
+                        "Honestly, probably for the best."
+                    ),
+                    Triple(
+                        "How did the editorial panel react to the draft report?",
+                        "They didn't hold back—they moved to $spoken the whole premise in the first ten minutes.",
+                        "Whoa, sounds like it's going back for a major rewrite."
+                    )
+                )
+                SemanticIntent.DISCOVER_SOLVE -> listOf(
+                    Triple(
+                        "Did anyone figure out why the monthly totals weren't matching up?",
+                        "We're sitting down at two to $spoken the discrepancy before finance closes the books.",
+                        "Nice—let me know what you end up finding."
+                    ),
+                    Triple(
+                        "That second chapter raises a ton of unanswered questions.",
+                        "Keep reading—the author starts to $spoken the whole pattern by chapter four.",
+                        "Okay, good—I'm staying with it tonight."
+                    )
+                )
+                SemanticIntent.SUPPORT_COLLABORATE, SemanticIntent.PRAISE_POSITIVE -> listOf(
+                    Triple(
+                        "Do we have enough data to back up the recommendation in Friday's deck?",
+                        "Yeah, the customer interviews really $spoken our case.",
+                        "Awesome—that'll make the sign-off way easier."
+                    )
+                )
+                SemanticIntent.SECRET_CONFUSING -> listOf(
+                    Triple(
+                        "Why did that press release leave everyone with more questions than answers?",
+                        "Honestly, it felt like they wrote it to $spoken the real reason behind the delay.",
+                        "Yeah, nobody buys vague corporate spin anymore."
+                    )
+                )
+                SemanticIntent.MONEY_VALUE -> listOf(
+                    Triple(
+                        "How are we handling the upfront venue deposit for the group trip?",
+                        "I can $spoken the cost today and everyone can pay me back on Friday.",
+                        "You're a lifesaver—I'll send my share tonight."
+                    )
+                )
+                SemanticIntent.WORK_STRATEGY -> listOf(
+                    Triple(
+                        "Are we ready to share the plan with the broader group tomorrow?",
+                        "Almost—I want to $spoken a few loose ends before the invite goes out.",
+                        "Sounds good—ping me if you want another pair of eyes on it."
+                    )
+                )
+                else -> listOf(
+                    Triple(
+                        "What's the plan for the rest of the afternoon?",
+                        "I need twenty minutes to $spoken a couple open items, then I'm free.",
+                        "Take your time—no rush at all."
+                    ),
+                    Triple(
+                        "Wait, how did they handle that twist halfway through the project?",
+                        "They stepped back to $spoken the whole approach before committing any further.",
+                        "Makes sense—better to adjust early."
+                    )
+                )
+            }
+
+            ExpressionGrammar.COMPLETE_VERB_PHRASE -> when {
+                usesSecondPerson && polarity == Polarity.NEGATIVE -> listOf(
+                    Triple(
+                        "I'm frustrated enough to send a pretty blunt reply to the whole thread.",
+                        "Take five minutes first—you really don't want to $spoken over one tense afternoon.",
+                        "Fair point. I'll draft it, let it sit, and cool off."
+                    ),
+                    Triple(
+                        "Think I should skip the final check so I can leave early?",
+                        "I wouldn't—if you $spoken now, it'll just come back to bite you next week.",
+                        "Yeah, you're right. Better to finish cleanly."
+                    )
+                )
+                usesSecondPerson -> listOf(
+                    Triple(
+                        "Should I wait for their first offer before showing all my numbers?",
+                        "Definitely listen first—you don't want to $spoken too early.",
+                        "Good advice. I'll hear where they land first."
+                    ),
+                    Triple(
+                        "I've got a packed month ahead—any advice on pacing myself?",
+                        "Just make sure you don't $spoken trying to please everybody at once.",
+                        "Needed to hear that. I'm blocking off Sunday."
+                    )
+                )
+                intent == SemanticIntent.CRITICISM_NEGATIVE || intent == SemanticIntent.OPPOSE_BLOCK -> listOf(
+                    Triple(
+                        "Why did that contractor's remodel fall apart after six months?",
+                        "Because they tried to $spokenThird instead of doing the prep work properly.",
+                        "Ugh, cheap shortcuts always cost twice as much later."
+                    ),
+                    Triple(
+                        "Did anyone warn them that rushing the rollout was risky?",
+                        "Plenty of people did, but they still chose to $spokenThird anyway.",
+                        "No surprise it blew up on launch day."
+                    )
+                )
+                intent == SemanticIntent.TIME_SCHEDULE -> listOf(
+                    Triple(
+                        "We're running low on time before the next meeting starts.",
+                        "Good catch—let's $spokenThird for now and pick it back up tomorrow afternoon.",
+                        "Works for me. That keeps us on schedule."
+                    ),
+                    Triple(
+                        "Are we really going to keep debating this past six o'clock?",
+                        "Honestly, let's $spokenThird and look at it with fresh eyes in the morning.",
+                        "Deal—my brain is fried anyway."
+                    )
+                )
+                intent == SemanticIntent.MONEY_VALUE -> listOf(
+                    Triple(
+                        "Are we still going forward with that pricey vendor add-on?",
+                        "Once we saw the renewal quote, we decided to $spokenThird before spending another dime.",
+                        "Smart—no reason to sink more money into it."
+                    )
+                )
+                intent == SemanticIntent.COMMUNICATION_SPEECH -> listOf(
+                    Triple(
+                        "How did the conversation go once everybody sat down?",
+                        "Nobody beat around the bush—they decided to $spokenThird right away.",
+                        "Honestly, I respect directness way more than awkward hinting."
+                    )
+                )
+                intent == SemanticIntent.PRAISE_POSITIVE || intent == SemanticIntent.SUPPORT_COLLABORATE -> listOf(
+                    Triple(
+                        "How did your team pull off that turnaround in a single week?",
+                        "Everyone jumped in ready to $spokenThird, and nobody waited to be asked.",
+                        "That's the kind of crew you never want to leave."
+                    )
+                )
+                else -> listOf(
+                    Triple(
+                        "Think we should wait until Monday to deal with that?",
+                        "Nah, better to $spokenThird right now while everything's fresh.",
+                        "True—handling it sooner saves everyone a headache."
+                    ),
+                    Triple(
+                        "What did you end up deciding after talking it over?",
+                        "We weighed the options and figured it made the most sense to $spokenThird.",
+                        "Fair enough—let me know how it shakes out."
+                    )
+                )
+            }
+
+            ExpressionGrammar.INTRANSITIVE_VERB -> when (intent) {
+                SemanticIntent.REDUCE_LESSEN -> listOf(
+                    Triple(
+                        "Is the rain still coming down sideways? I left my umbrella at home.",
+                        "Yeah, it's wild out there, though the forecast says it should $spoken in about twenty minutes.",
+                        "Perfect—gives me an excuse to grab another coffee first."
+                    ),
+                    Triple(
+                        "Are people still worked up over that online argument?",
+                        "Not really—those flare-ups usually $spoken as soon as the weekend hits.",
+                        "So true. Everybody moves on pretty fast."
+                    )
+                )
+                SemanticIntent.INCREASE_GROW -> listOf(
+                    Triple(
+                        "Did adding another layer of rules actually calm things down?",
+                        "Not at all—complaints started to $spoken within twenty-four hours.",
+                        "Oof, that backfired fast."
+                    ),
+                    Triple(
+                        "How fast are those neighborhood pop-ups catching on?",
+                        "Wildly fast—new spots seem to $spoken every single month.",
+                        "No kidding—I can barely keep track of all of them."
+                    )
+                )
+                SemanticIntent.COMMUNICATION_SPEECH -> listOf(
+                    Triple(
+                        "How was the panel discussion last night?",
+                        "Interesting, though one speaker started to $spoken for twenty minutes straight without taking questions.",
+                        "Haha, every conference has at least one person like that."
+                    )
+                )
+                SemanticIntent.OPPOSE_BLOCK, SemanticIntent.CRITICISM_NEGATIVE -> listOf(
+                    Triple(
+                        "Wait, did Jordan actually stick around for the tough part of the project?",
+                        "Nope—the second things got messy, he decided to $spoken.",
+                        "Ugh, that leaves everyone else scrambling."
+                    )
+                )
+                SemanticIntent.TIME_SCHEDULE -> listOf(
+                    Triple(
+                        "Are we still waiting on an answer before booking the tickets?",
+                        "Yeah, I hate to $spoken, but prices jump at midnight if we don't lock it in.",
+                        "Good call—let's decide after lunch."
+                    )
+                )
+                else -> listOf(
+                    Triple(
+                        "How are things settling in after last week's big shift?",
+                        "The first couple days were chaotic, though things are starting to $spoken now.",
+                        "Glad to hear it's smoothing out."
+                    ),
+                    Triple(
+                        "Think everyone's going to stick with the original plan?",
+                        "Hard to tell yet—let's see how things $spoken over the next couple days.",
+                        "Fair enough. Keep me posted."
+                    )
+                )
+            }
+
+            ExpressionGrammar.PREPOSITIONAL_STATE -> when {
+                usesSecondPerson -> listOf(
+                    Triple(
+                        "Sorry I missed your text—between deadlines and packing, this week's been nonstop.",
+                        "No worries at all, sounds like you're $spoken right now—let's catch up next week.",
+                        "Appreciate it! Coffee's on me once things calm down."
+                    )
+                )
+                intent == SemanticIntent.CRITICISM_NEGATIVE || intent == SemanticIntent.OPPOSE_BLOCK -> listOf(
+                    Triple(
+                        "Wait, what happened at dinner last night? You looked stunned.",
+                        "His comment to the server was completely $spokenThird—the whole table went quiet.",
+                        "Yikes, I'm sorry you had to sit through that."
+                    ),
+                    Triple(
+                        "How did people react to that surprise email from management?",
+                        "Pretty frustrated—honestly, the whole thing felt $spokenThird.",
+                        "Yeah, nobody appreciated getting blindsided like that."
+                    )
+                )
+                intent == SemanticIntent.PRAISE_POSITIVE || intent == SemanticIntent.SUPPORT_COLLABORATE -> listOf(
+                    Triple(
+                        "How did the neighborhood crew handle helping with the move?",
+                        "They were honestly $spokenThird—stayed late and didn't even let me buy pizza.",
+                        "You've got the best friends."
+                    ),
+                    Triple(
+                        "Did the new vendor deliver what they promised?",
+                        "Even better—their support team went $spokenThird all week.",
+                        "Love when a team actually comes through like that."
+                    )
+                )
+                intent == SemanticIntent.CLEAR_DIRECT -> listOf(
+                    Triple(
+                        "Did procurement finish checking the new partner contract?",
+                        "Yep, everything came back $spokenThird, so we're good to kick off Monday.",
+                        "Awesome—glad there weren't any surprises."
+                    )
+                )
+                intent == SemanticIntent.SECRET_CONFUSING -> listOf(
+                    Triple(
+                        "Did anyone actually tell your team about the reorganization ahead of time?",
+                        "Not a word—we were completely $spokenThird until the all-hands.",
+                        "Ugh, finding out like that is the worst."
+                    )
+                )
+                intent == SemanticIntent.TIME_SCHEDULE -> listOf(
+                    Triple(
+                        "Are we able to get a quick answer from legal before noon?",
+                        "Probably not—half their team is $spokenThird until Thursday afternoon.",
+                        "Got it, thanks for the heads-up. I'll adjust the timeline."
+                    )
+                )
+                intent == SemanticIntent.MONEY_VALUE -> listOf(
+                    Triple(
+                        "Did the airline end up covering your hotel after the missed connection?",
+                        "Not yet—I had to pay $spokenThird last night and submit the receipt.",
+                        "Make sure you screenshot every receipt before filing."
+                    )
+                )
+                else -> listOf(
+                    Triple(
+                        "Have you decided whether you're taking the new apartment or renewing?",
+                        "Still $spokenThird—both options have real tradeoffs.",
+                        "Take the weekend to think it through; no need to rush."
+                    ),
+                    Triple(
+                        "How are things looking with the weekend plans?",
+                        "Honestly, everything's still $spokenThird until we hear back from Sam.",
+                        "Makes sense—just text me once it's locked in."
+                    )
+                )
+            }
+
+            ExpressionGrammar.ADJECTIVE -> when (intent) {
+                SemanticIntent.PRAISE_POSITIVE, SemanticIntent.SUPPORT_COLLABORATE -> listOf(
+                    Triple(
+                        "So, was that new documentary actually worth staying up for?",
+                        "Honestly, yes—the cinematography and pacing were genuinely $spoken.",
+                        "Okay, adding it to my weekend watchlist right now."
+                    ),
+                    Triple(
+                        "How did your meeting with the new design lead go?",
+                        "Great—her feedback was super $spoken, and we left with a much clearer plan.",
+                        "Love working with people who elevate the whole room."
+                    )
+                )
+                SemanticIntent.CRITICISM_NEGATIVE, SemanticIntent.OPPOSE_BLOCK -> listOf(
+                    Triple(
+                        "Did you read the theater critic's column on the new play?",
+                        "Yeah, over breakfast—their review was surprisingly $spoken, didn't spare a single scene.",
+                        "Oof, tough crowd. Still curious to see it myself, though."
+                    ),
+                    Triple(
+                        "How did that debate at the neighborhood meeting go?",
+                        "Pretty tense—a couple folks got weirdly $spoken as soon as parking came up.",
+                        "Yikes, local meetings always escalate way too fast."
+                    )
+                )
+                SemanticIntent.BORING_OVERUSED -> listOf(
+                    Triple(
+                        "Worth watching the sequel this weekend, or should I skip it?",
+                        "Skip it—the plot felt pretty $spoken, like we'd seen every twist a dozen times.",
+                        "Thanks for saving me two hours and twenty bucks."
+                    ),
+                    Triple(
+                        "How was the keynote at the industry summit?",
+                        "Honestly a little $spoken—same recycled slides everyone's seen for three years.",
+                        "Ugh, hate sitting through talks like that."
+                    )
+                )
+                SemanticIntent.BRIEF_TEMPORARY -> listOf(
+                    Triple(
+                        "Think that viral food trend is still going to be packed next month?",
+                        "Doubt it—those hype waves are usually pretty $spoken around here.",
+                        "True, give it three weeks and there won't even be a line."
+                    ),
+                    Triple(
+                        "Did they give a long explanation for the policy shift?",
+                        "Nope—the memo was super $spoken, just two short lines and nothing else.",
+                        "Whoa, definitely leaves a lot to unpack."
+                    )
+                )
+                SemanticIntent.EXCESSIVE_INTENSE -> listOf(
+                    Triple(
+                        "How was your cousin's wedding reception?",
+                        "Fun, though the five-piece fireworks show during dessert felt a little $spoken.",
+                        "Haha, okay, that definitely sounds unforgettable."
+                    ),
+                    Triple(
+                        "How's the inbox looking after taking three days off?",
+                        "Honestly, pretty $spoken—I've got two hundred unread threads waiting.",
+                        "Oof, grab a big coffee before diving in."
+                    )
+                )
+                SemanticIntent.REDUCE_LESSEN -> listOf(
+                    Triple(
+                        "Did the crowd thin out after the first band wrapped up?",
+                        "Yeah, the energy got much more $spoken by ten o'clock.",
+                        "Nice—that's honestly my favorite vibe."
+                    )
+                )
+                SemanticIntent.SECRET_CONFUSING -> listOf(
+                    Triple(
+                        "Did the legal disclaimer actually answer your question?",
+                        "Not even close—the wording was so $spoken that nobody could tell what it meant.",
+                        "Classic fine print. Ask them for a plain-English summary."
+                    )
+                )
+                SemanticIntent.CLEAR_DIRECT -> listOf(
+                    Triple(
+                        "Was it obvious what the director wanted changed in the edit?",
+                        "Completely—her notes were super $spoken, so we fixed it in ten minutes.",
+                        "Nothing beats crisp, clear feedback."
+                    )
+                )
+                SemanticIntent.MONEY_VALUE -> listOf(
+                    Triple(
+                        "Did you end up booking that boutique hotel near the conference?",
+                        "No way—the nightly rate felt way too $spoken for a two-night work trip.",
+                        "Smart call. There are way better options two blocks over."
+                    )
+                )
+                SemanticIntent.TIME_SCHEDULE -> listOf(
+                    Triple(
+                        "Got ten minutes to review the draft before three?",
+                        "I'm pretty $spoken this afternoon, so let's grab time first thing tomorrow.",
+                        "Works for me—I'll drop a hold on your morning calendar."
+                    )
+                )
+                else -> listOf(
+                    Triple(
+                        "Did you finish that podcast episode I sent over?",
+                        "Yeah, on my commute—the host's take turned surprisingly $spoken in the second half.",
+                        "Right? I wasn't expecting it to go in that direction."
+                    ),
+                    Triple(
+                        "How's this month's book club pick so far?",
+                        "Pretty gripping, though the middle chapters feel a little $spoken.",
+                        "Good to know—I'll dive into it Saturday morning."
+                    )
+                )
+            }
+
+            ExpressionGrammar.DETERMINER_NOUN -> when (polarity) {
+                Polarity.NEGATIVE -> listOf(
+                    Triple(
+                        "How did a ten-minute logistics sync turn into an hour of arguing?",
+                        "No idea—one comment about seating and suddenly we were dealing with $spoken.",
+                        "Oof, glad I missed that meeting."
+                    )
+                )
+                Polarity.POSITIVE -> listOf(
+                    Triple(
+                        "Why is every team suddenly excited to join the pilot?",
+                        "Because once something starts paying off, everybody wants $spoken.",
+                        "Haha, true—nobody volunteered when it was still rough."
+                    )
+                )
+                Polarity.NEUTRAL -> listOf(
+                    Triple(
+                        "How are you feeling about the decision now that the dust settled?",
+                        "Honestly, pretty good—it feels like $spoken for where we're at right now.",
+                        "Makes total sense. Glad it's feeling solid."
+                    )
+                )
+            }
+
+            ExpressionGrammar.DEFINITE_NOUN -> when (polarity) {
+                Polarity.NEGATIVE -> listOf(
+                    Triple(
+                        "How did splitting up the weekend shifts end up working out?",
+                        "Not great—I somehow got the $spoken and ended up closing both nights.",
+                        "Oof, they definitely owe you next weekend off."
+                    )
+                )
+                Polarity.POSITIVE -> listOf(
+                    Triple(
+                        "How did your team pull ahead in the second half of the pitch?",
+                        "Once we showed the live numbers, we clearly had the $spoken.",
+                        "Nice! Nothing beats walking in prepared."
+                    )
+                )
+                Polarity.NEUTRAL -> listOf(
+                    Triple(
+                        "What's the main thing holding up the final decision?",
+                        "That detail has been the $spoken since day one—everything else is already agreed.",
+                        "Got it. Let's focus there so we can close it out."
+                    )
+                )
+            }
+
+            ExpressionGrammar.PERSON_NOUN -> when (polarity) {
+                Polarity.NEGATIVE -> listOf(
+                    Triple(
+                        "Why did everyone roll their eyes when Marcus chimed in during the all-hands?",
+                        "Because he always acts like $art $spoken whenever leadership is in the room.",
+                        "Ugh, yeah—everybody sees right through that."
+                    ),
+                    Triple(
+                        "Are you inviting your old coworker to the dinner Friday?",
+                        "Probably not—he can be a bit of $art $spoken and turns simple hangs into drama.",
+                        "Fair enough. Let's keep the group relaxed."
+                    )
+                )
+                Polarity.POSITIVE -> listOf(
+                    Triple(
+                        "Have you worked with Nadia on the community project yet?",
+                        "Yeah, she's $art real $spoken—everybody trusts her judgment when things get tough.",
+                        "Love hearing that. Can't wait to meet her next week."
+                    ),
+                    Triple(
+                        "How did your sister handle organizing the whole reunion by herself?",
+                        "She's $art total $spoken—kept everyone calm and somehow made it look effortless.",
+                        "Honestly, buy her dinner next time you see her."
+                    )
+                )
+                Polarity.NEUTRAL -> listOf(
+                    Triple(
+                        "Have you read that Sunday profile on the neighborhood architect?",
+                        "Yeah, twice—people who know her describe her as $art $spoken with a pretty distinct way of working.",
+                        "Send me the link! Sounds like a great weekend read."
+                    )
+                )
+            }
+
+            ExpressionGrammar.THING_NOUN -> when (intent) {
+                SemanticIntent.CRITICISM_NEGATIVE, SemanticIntent.OPPOSE_BLOCK, SemanticIntent.BORING_OVERUSED -> listOf(
+                    Triple(
+                        "Why did engineering push back on copying the old signup flow?",
+                        "They flagged it as $art classic $spoken that'll create headaches down the road.",
+                        "Fair enough—glad they spoke up before we built it."
+                    ),
+                    Triple(
+                        "Did the committee's big rebrand actually fix the underlying issue?",
+                        "Not really—most folks walked away calling it $art $spoken.",
+                        "Oof, what a waste of three months."
+                    )
+                )
+                SemanticIntent.PRAISE_POSITIVE, SemanticIntent.DISCOVER_SOLVE, SemanticIntent.SUPPORT_COLLABORATE -> listOf(
+                    Triple(
+                        "What came out of yesterday's customer interviews?",
+                        "We came away with $art real $spoken that clarified our whole roadmap.",
+                        "Nice! Drop that into Monday's deck before leadership sees it."
+                    ),
+                    Triple(
+                        "Did the new neighborhood market live up to the hype?",
+                        "Totally—finding fresh sourdough right around the corner is $art real $spoken.",
+                        "Okay, I'm definitely walking over there Saturday."
+                    )
+                )
+                SemanticIntent.COMMUNICATION_SPEECH -> listOf(
+                    Triple(
+                        "Did you catch the ending of that interview clip?",
+                        "Yeah—his final line was $art total $spoken, and nobody knew what to say next.",
+                        "Haha, send me the clip—I have to see that."
+                    )
+                )
+                SemanticIntent.MONEY_VALUE -> listOf(
+                    Triple(
+                        "How did the budget review go with the new vendor?",
+                        "They threw in $art surprise $spoken right at the end of the quote.",
+                        "Good thing you read the whole page before signing."
+                    )
+                )
+                else -> listOf(
+                    Triple(
+                        "What's the main thing you took away from yesterday's session?",
+                        "Honestly, that moment turned into $art real $spoken for the whole group.",
+                        "Makes sense—definitely worth keeping in mind."
+                    ),
+                    Triple(
+                        "Wait, how did that side conversation shift the whole plan?",
+                        "It introduced $art unexpected $spoken nobody had factored in yet.",
+                        "Good catch—better to spot it now than next week."
+                    )
+                )
+            }
+
+            ExpressionGrammar.UNCOUNTABLE_NOUN -> when (intent) {
+                SemanticIntent.CRITICISM_NEGATIVE, SemanticIntent.OPPOSE_BLOCK, SemanticIntent.BORING_OVERUSED -> listOf(
+                    Triple(
+                        "How did the joint planning meeting feel from your side of the table?",
+                        "Pretty rough—you could feel the $spoken in the room before anyone even opened their slides.",
+                        "Oof, hopefully everyone cools off before the next check-in."
+                    ),
+                    Triple(
+                        "Why did people stop showing up to those Friday town halls?",
+                        "Honestly, the $spoken just wore everybody down over time.",
+                        "Yeah, that's hard to bounce back from."
+                    )
+                )
+                SemanticIntent.PRAISE_POSITIVE, SemanticIntent.CLEAR_DIRECT, SemanticIntent.SUPPORT_COLLABORATE -> listOf(
+                    Triple(
+                        "What made you trust their founder so quickly during the interview?",
+                        "It was her $spoken—she answered every tough question without dodging a single detail.",
+                        "That's rare. Usually people just spin things."
+                    ),
+                    Triple(
+                        "How did your team pull together after such a rocky quarter?",
+                        "Honestly, a lot of $spoken—everybody had each other's backs.",
+                        "Love hearing that. That kind of culture is hard to build."
+                    )
+                )
+                SemanticIntent.COMMUNICATION_SPEECH -> listOf(
+                    Triple(
+                        "Wait, why is everyone whispering by the coffee machine?",
+                        "Because Sam just walked in with fresh $spoken from last night's company mixer.",
+                        "Haha, okay, now I have to hear what happened."
+                    )
+                )
+                SemanticIntent.MONEY_VALUE -> listOf(
+                    Triple(
+                        "Are you happy with the compensation package they sent over?",
+                        "Mostly—I just want to double-check the $spoken before I sign anything.",
+                        "Smart move. Always read the fine print on those."
+                    )
+                )
+                SemanticIntent.WORK_STRATEGY -> listOf(
+                    Triple(
+                        "What are we focusing on in tomorrow's planning offsite?",
+                        "Mostly tightening up our $spoken before next quarter kicks off.",
+                        "Good call—that's the piece everyone had questions about."
+                    )
+                )
+                else -> listOf(
+                    Triple(
+                        "What stood out most to you after talking with the whole team?",
+                        "Honestly, the sheer level of $spoken—you don't see that every day.",
+                        "Makes sense. Sounds like it left a real impression."
+                    )
+                )
+            }
+        }
+    }
+
+    /**
+     * Each tuple is: (domainLabel, leadLine, Pair(replyTemplateWith%s, surfaceFormToInsert)).
+     * Strictly distinct in setting & wording from lesson dialogues!
+     */
+    private fun pickTransferTemplates(
+        category: PhraseCategory,
+        grammar: ExpressionGrammar,
+        intent: SemanticIntent,
+        polarity: Polarity,
+        clean: String,
+        spoken: String,
+        spokenThird: String,
+        usesSecondPerson: Boolean
+    ): List<Triple<String, String, Pair<String, String>>> {
+        val lower = clean.lowercase(Locale.US)
+        val art = articleFor(spoken)
+        val artThird = articleFor(spokenThird)
+
+        return when (grammar) {
+            ExpressionGrammar.STANDALONE_REACTION -> when {
+                lower in negativeReactionTerms || polarity == Polarity.NEGATIVE -> listOf(
+                    Triple(
+                        "Group Chat",
+                        "Wait—did they really cancel the train five minutes before departure?",
+                        "%s—guess we're splitting a cab to the airport." to spoken
+                    ),
+                    Triple(
+                        "Lunch Break",
+                        "They want to schedule a mandatory two-hour brainstorm at 5 p.m. Friday.",
+                        "%s—I'm already packed for the weekend." to spoken
+                    )
+                )
+                lower in neutralReactionTerms -> listOf(
+                    Triple(
+                        "Coffee Run",
+                        "I'm going to try the new commute route for a week before judging it.",
+                        "%s—you'll know by Friday if it saves time." to spoken
+                    )
+                )
+                else -> listOf(
+                    Triple(
+                        "Group Chat",
+                        "Are we still meeting at the coffee shop on Main at nine?",
+                        "%s—I'm grabbing my keys right now." to spoken
+                    ),
+                    Triple(
+                        "Post-Game Walk",
+                        "Tell me that wasn't the wildest overtime finish all season.",
+                        "%s—I still can't believe that last shot went in." to spoken
+                    )
+                )
+            }
+
+            ExpressionGrammar.PAST_VERB_PHRASE -> if (polarity == Polarity.NEGATIVE) {
+                listOf(
+                    Triple(
+                        "Post-Meeting Walk",
+                        "How did the surprise pop quiz go in your seminar?",
+                        "Honestly, I completely %s on the last two essays." to spokenThird
+                    )
+                )
+            } else {
+                listOf(
+                    Triple(
+                        "Brunch Catchup",
+                        "How did Devon's keynote go at the conference?",
+                        "Seriously, he walked up without notes and completely %s." to spokenThird
+                    ),
+                    Triple(
+                        "Coffee Run",
+                        "Did your cousin's band survive the outdoor festival rain?",
+                        "Better than survived—they kept playing and honestly %s." to spokenThird
+                    )
+                )
+            }
+
+            ExpressionGrammar.TRANSITIVE_PERSON_VERB -> when (intent) {
+                SemanticIntent.OPPOSE_BLOCK, SemanticIntent.CRITICISM_NEGATIVE -> listOf(
+                    Triple(
+                        "Weekend Brunch",
+                        "Did the recruiter ever follow up after your final round?",
+                        "Not a single email—they really decided to %s me after three interviews." to spoken
+                    ),
+                    Triple(
+                        "Evening Walk",
+                        "Why did Carlos leave the trivia team mid-season?",
+                        "A couple folks kept trying to %s him every time he missed a question." to spoken
+                    )
+                )
+                SemanticIntent.SUPPORT_COLLABORATE, SemanticIntent.PRAISE_POSITIVE -> listOf(
+                    Triple(
+                        "Office Kitchen",
+                        "How's the new analyst settling in before her first client readout?",
+                        "Great—I grabbed five minutes before lunch to %s her so she feels ready." to spoken
+                    )
+                )
+                else -> listOf(
+                    Triple(
+                        "Commute Call",
+                        "Did you ever get a chance to talk with your old mentor in Boston?",
+                        "Yeah, I called to %s her on my drive home and we caught up for twenty minutes." to spoken
+                    )
+                )
+            }
+
+            ExpressionGrammar.TRANSITIVE_THING_VERB -> when (intent) {
+                SemanticIntent.REDUCE_LESSEN -> listOf(
+                    Triple(
+                        "Client Call",
+                        "People are still nervous about the billing migration next month.",
+                        "Walking them through a test account first should %s their worries." to spoken
+                    )
+                )
+                SemanticIntent.INCREASE_GROW -> listOf(
+                    Triple(
+                        "Team Retro",
+                        "Should we announce half-baked pricing changes before the FAQ is written?",
+                        "No way—that'll only %s the confusion in support." to spoken
+                    )
+                )
+                SemanticIntent.OPPOSE_BLOCK, SemanticIntent.CRITICISM_NEGATIVE -> listOf(
+                    Triple(
+                        "Editorial Desk",
+                        "Did the town council approve that late-night construction permit?",
+                        "No—residents showed up and pushed the board to %s the plan." to spoken
+                    )
+                )
+                SemanticIntent.DISCOVER_SOLVE -> listOf(
+                    Triple(
+                        "Product Review",
+                        "Any clue why checkout conversion dipped over the weekend?",
+                        "We're pulling the logs after lunch to %s the root cause." to spoken
+                    )
+                )
+                SemanticIntent.MONEY_VALUE -> listOf(
+                    Triple(
+                        "Road Trip",
+                        "Who's covering the cabin booking until everyone sends their split?",
+                        "I can %s the deposit today and you guys can reimburse me next week." to spoken
+                    )
+                )
+                SemanticIntent.SECRET_CONFUSING -> listOf(
+                    Triple(
+                        "Newsroom Edit",
+                        "Why was that spokesperson's statement so hard to follow?",
+                        "It honestly felt designed to %s what actually happened." to spoken
+                    )
+                )
+                else -> listOf(
+                    Triple(
+                        "Client Sync",
+                        "Should we wait until Monday to deal with that open item?",
+                        "Better to %s it this afternoon while everyone's still online." to spoken
+                    ),
+                    Triple(
+                        "Editorial Desk",
+                        "This opening section still feels slightly off before the chart.",
+                        "Agreed—let's %s the first paragraph before sending it over." to spoken
+                    )
+                )
+            }
+
+            ExpressionGrammar.COMPLETE_VERB_PHRASE -> when {
+                usesSecondPerson && polarity == Polarity.NEGATIVE -> listOf(
+                    Triple(
+                        "Coffee Catchup",
+                        "I'm tempted to rush the handoff without testing the backup.",
+                        "Don't %s just to save half an hour—it'll cost us tomorrow." to spoken
+                    )
+                )
+                usesSecondPerson -> listOf(
+                    Triple(
+                        "Evening Walk",
+                        "Should I share my exact counteroffer on the very first screening call?",
+                        "Hold off—you don't want to %s before they confirm the role level." to spoken
+                    )
+                )
+                intent == SemanticIntent.CRITICISM_NEGATIVE || intent == SemanticIntent.OPPOSE_BLOCK -> listOf(
+                    Triple(
+                        "Client Debrief",
+                        "Why did that third-party agency lose the renewal so quickly?",
+                        "They started to %s once they thought nobody was checking the details." to spokenThird
+                    )
+                )
+                intent == SemanticIntent.TIME_SCHEDULE -> listOf(
+                    Triple(
+                        "Team Standup",
+                        "This side question about next quarter's swag budget is eating our whole sync.",
+                        "Let's %s for now and finish the launch checklist first." to spokenThird
+                    )
+                )
+                intent == SemanticIntent.PRAISE_POSITIVE || intent == SemanticIntent.SUPPORT_COLLABORATE -> listOf(
+                    Triple(
+                        "Volunteer Shift",
+                        "How did you guys get all two hundred meal boxes packed before noon?",
+                        "Everybody showed up ready to %s without waiting for instructions." to spokenThird
+                    )
+                )
+                else -> listOf(
+                    Triple(
+                        "Client Debrief",
+                        "We've been circling around this decision for two weeks now.",
+                        "Honestly, it's time to %s so the team can move forward." to spokenThird
+                    )
+                )
+            }
+
+            ExpressionGrammar.INTRANSITIVE_VERB -> when (intent) {
+                SemanticIntent.REDUCE_LESSEN -> listOf(
+                    Triple(
+                        "Commute Call",
+                        "Are you still stuck in that downtown concert traffic?",
+                        "Yeah, bumper-to-bumper—I'm grabbing a taco until the rush starts to %s." to spoken
+                    ),
+                    Triple(
+                        "Weekend Hike",
+                        "Think we should wait out these gusts before heading up the ridge?",
+                        "Good idea—the trail report said the wind should %s right around three." to spoken
+                    )
+                )
+                SemanticIntent.INCREASE_GROW -> listOf(
+                    Triple(
+                        "Neighborhood Walk",
+                        "Did those new coffee carts really take over the whole plaza?",
+                        "Yeah—new ones seemed to %s as soon as spring hit." to spoken
+                    )
+                )
+                SemanticIntent.COMMUNICATION_SPEECH -> listOf(
+                    Triple(
+                        "Book Club",
+                        "Did everybody get a turn to share their thoughts on the ending?",
+                        "Almost—once Greg started to %s, we lost fifteen minutes." to spoken
+                    )
+                )
+                SemanticIntent.OPPOSE_BLOCK, SemanticIntent.CRITICISM_NEGATIVE -> listOf(
+                    Triple(
+                        "Slack DM",
+                        "Did their lead volunteer actually stay to help clean up?",
+                        "Nope—he decided to %s the second the event wrapped." to spoken
+                    )
+                )
+                else -> listOf(
+                    Triple(
+                        "Slack DM",
+                        "Are people still stressing over the schedule shift?",
+                        "A couple folks vented earlier, though things should %s by Thursday." to spoken
+                    )
+                )
+            }
+
+            ExpressionGrammar.PREPOSITIONAL_STATE -> when {
+                usesSecondPerson -> listOf(
+                    Triple(
+                        "Weekend Text",
+                        "Sorry for the late reply—packing for the move plus client deadlines wiped me out.",
+                        "No stress at all, sounds like you're %s this week—let's grab dinner once you settle." to spoken
+                    )
+                )
+                intent == SemanticIntent.CRITICISM_NEGATIVE || intent == SemanticIntent.OPPOSE_BLOCK -> listOf(
+                    Triple(
+                        "Coffee Shop",
+                        "Did you hear what he said to the intern in front of the whole team?",
+                        "Yeah, that remark was completely %s—somebody really needed to step in." to spokenThird
+                    )
+                )
+                intent == SemanticIntent.PRAISE_POSITIVE || intent == SemanticIntent.SUPPORT_COLLABORATE -> listOf(
+                    Triple(
+                        "Dinner Table",
+                        "Did the local repair shop charge extra for staying past closing to finish your brakes?",
+                        "Not a dime—they went %s so I could still make my weekend trip." to spokenThird
+                    )
+                )
+                intent == SemanticIntent.CLEAR_DIRECT -> listOf(
+                    Triple(
+                        "Client Review",
+                        "Did legal find any red flags in the new vendor contract?",
+                        "None at all—everything looked completely %s." to spokenThird
+                    )
+                )
+                intent == SemanticIntent.TIME_SCHEDULE -> listOf(
+                    Triple(
+                        "Slack DM",
+                        "Can we get Priya's sign-off on the design spec before lunch?",
+                        "She's %s until tomorrow morning, so let's leave comments in the doc." to spokenThird
+                    )
+                )
+                intent == SemanticIntent.MONEY_VALUE -> listOf(
+                    Triple(
+                        "Airport Gate",
+                        "Did work give you a travel card for the last-minute flight change?",
+                        "No, I covered it %s and I'm submitting the expense report tonight." to spokenThird
+                    )
+                )
+                else -> listOf(
+                    Triple(
+                        "Podcast Chat",
+                        "Are you switching to the new neighborhood gym or keeping your old membership?",
+                        "Still %s—both places have real pros and cons." to spokenThird
+                    )
+                )
+            }
+
+            ExpressionGrammar.ADJECTIVE -> when (intent) {
+                SemanticIntent.PRAISE_POSITIVE, SemanticIntent.SUPPORT_COLLABORATE -> listOf(
+                    Triple(
+                        "Weekend Brunch",
+                        "Was that new acoustic set worth the drive across town?",
+                        "One hundred percent—the arrangement and vocals were genuinely %s." to spoken
+                    )
+                )
+                SemanticIntent.CRITICISM_NEGATIVE, SemanticIntent.OPPOSE_BLOCK -> listOf(
+                    Triple(
+                        "Book Club",
+                        "What did you think of the columnist's response to the city plan?",
+                        "Honestly, his tone turned unexpectedly %s in the second half." to spoken
+                    )
+                )
+                SemanticIntent.BORING_OVERUSED -> listOf(
+                    Triple(
+                        "Movie Night",
+                        "Should we stream that thriller everyone was hyping last month?",
+                        "Honestly, it felt pretty %s—nothing we haven't seen a dozen times." to spoken
+                    )
+                )
+                SemanticIntent.BRIEF_TEMPORARY -> listOf(
+                    Triple(
+                        "Coffee Shop",
+                        "Think that sudden drop in wait times will last through the holiday rush?",
+                        "Probably not—calm stretches like this are usually pretty %s." to spoken
+                    )
+                )
+                SemanticIntent.TIME_SCHEDULE -> listOf(
+                    Triple(
+                        "Client Sync",
+                        "Can design squeeze in an extra landing page before Thursday's launch?",
+                        "We're pretty %s right now, so let's slate that for next Tuesday." to spoken
+                    )
+                )
+                SemanticIntent.MONEY_VALUE -> listOf(
+                    Triple(
+                        "Dinner Table",
+                        "Did you end up signing up for that boutique fitness studio?",
+                        "No—the monthly fee felt way too %s for how often I'd actually go." to spoken
+                    )
+                )
+                SemanticIntent.SECRET_CONFUSING -> listOf(
+                    Triple(
+                        "Study Group",
+                        "Did the new policy FAQ clarify who qualifies for the rebate?",
+                        "Not really—the phrasing is still weirdly %s." to spoken
+                    )
+                )
+                SemanticIntent.CLEAR_DIRECT -> listOf(
+                    Triple(
+                        "Team Retro",
+                        "Were the client's expectations obvious after yesterday's call?",
+                        "Totally—their feedback was super %s, zero guesswork." to spoken
+                    )
+                )
+                SemanticIntent.EXCESSIVE_INTENSE -> listOf(
+                    Triple(
+                        "Post-Event Walk",
+                        "How was the launch party downtown?",
+                        "Fun, though the giant ice sculpture and confetti cannons felt a little %s." to spoken
+                    )
+                )
+                else -> listOf(
+                    Triple(
+                        "Book Club",
+                        "What did you think of the memoir's final three chapters?",
+                        "I loved the opening, though the pacing felt surprisingly %s near the end." to spoken
+                    )
+                )
+            }
+
+            ExpressionGrammar.DETERMINER_NOUN -> when (polarity) {
+                Polarity.NEGATIVE -> listOf(
+                    Triple(
+                        "Dinner Banter",
+                        "How did a simple flight rebooking take four hours?",
+                        "Between the weather delay and the gate swap, it turned into %s." to spoken
+                    )
+                )
+                else -> listOf(
+                    Triple(
+                        "Lunch Break",
+                        "Why is every department suddenly asking for a seat on our pilot?",
+                        "Because once a project starts paying off, everybody wants %s." to spoken
+                    )
+                )
+            }
+
+            ExpressionGrammar.DEFINITE_NOUN -> when (polarity) {
+                Polarity.NEGATIVE -> listOf(
+                    Triple(
+                        "Dinner Banter",
+                        "How did splitting the cabin rooms end up going?",
+                        "We arrived last, so we definitely got the %s right next to the noisy stairs." to spoken
+                    )
+                )
+                else -> listOf(
+                    Triple(
+                        "Team Retro",
+                        "What's the single biggest factor in the rollout timeline?",
+                        "That checkout approval is sitting right on the %s." to spoken
+                    )
+                )
+            }
+
+            ExpressionGrammar.PERSON_NOUN -> when (polarity) {
+                Polarity.NEGATIVE -> listOf(
+                    Triple(
+                        "Coffee Run",
+                        "Why did nobody want to partner with Derek on the group presentation?",
+                        "Because he acts like $art total %s whenever managers are watching." to spoken
+                    )
+                )
+                Polarity.POSITIVE -> listOf(
+                    Triple(
+                        "Weekend Brunch",
+                        "Wait, your sister still drove everyone to the trailhead after working late?",
+                        "Seriously, she's $art total %s—never lets the group down." to spoken
+                    )
+                )
+                Polarity.NEUTRAL -> listOf(
+                    Triple(
+                        "Book Club",
+                        "How did the biography describe the museum's founder?",
+                        "Mostly as $art %s who preferred working outside the usual crowd." to spoken
+                    )
+                )
+            }
+
+            ExpressionGrammar.THING_NOUN -> when (intent) {
+                SemanticIntent.CRITICISM_NEGATIVE, SemanticIntent.OPPOSE_BLOCK, SemanticIntent.BORING_OVERUSED -> listOf(
+                    Triple(
+                        "Newsroom Edit",
+                        "Why did you cut that entire paragraph from the feature draft?",
+                        "Our editor flagged it as $art classic %s that weakened the piece." to spoken
+                    )
+                )
+                SemanticIntent.PRAISE_POSITIVE, SemanticIntent.DISCOVER_SOLVE, SemanticIntent.SUPPORT_COLLABORATE -> listOf(
+                    Triple(
+                        "Product Review",
+                        "Did anything jump out from last week's user testing sessions?",
+                        "Yeah, we uncovered $art huge %s right on the onboarding flow." to spoken
+                    )
+                )
+                else -> listOf(
+                    Triple(
+                        "Coffee Catchup",
+                        "What changed your mind halfway through the negotiation?",
+                        "They brought up $art unexpected %s that shifted the whole conversation." to spoken
+                    )
+                )
+            }
+
+            ExpressionGrammar.UNCOUNTABLE_NOUN -> when (intent) {
+                SemanticIntent.CRITICISM_NEGATIVE, SemanticIntent.OPPOSE_BLOCK, SemanticIntent.BORING_OVERUSED -> listOf(
+                    Triple(
+                        "Post-Meeting Walk",
+                        "Why did that Q&A wrap up fifteen minutes early?",
+                        "Honestly, the %s in the room made it impossible to have a real discussion." to spoken
+                    )
+                )
+                SemanticIntent.PRAISE_POSITIVE, SemanticIntent.CLEAR_DIRECT, SemanticIntent.SUPPORT_COLLABORATE -> listOf(
+                    Triple(
+                        "Post-Meeting Walk",
+                        "How did the budget conversation go with the new VP?",
+                        "Honestly, I appreciated her %s—she laid out the real constraints without sugarcoating." to spoken
+                    )
+                )
+                SemanticIntent.COMMUNICATION_SPEECH -> listOf(
+                    Triple(
+                        "Lunch Break",
+                        "Why did everyone crowd around Maya's desk after the town hall?",
+                        "She came back with fresh %s about next month's leadership shuffle." to spoken
+                    )
+                )
+                else -> listOf(
+                    Triple(
+                        "Executive Sync",
+                        "What's the main focus before next quarter's partner pitch?",
+                        "Dialing in our %s so buyers immediately see what sets us apart." to spoken
+                    )
+                )
+            }
+        }
     }
 
     private val metaLanguagePatterns = listOf(

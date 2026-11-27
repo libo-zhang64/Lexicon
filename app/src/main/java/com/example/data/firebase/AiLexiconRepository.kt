@@ -451,12 +451,14 @@ class AiLexiconRepository {
             val selected = learnedPhrases.shuffled().take(5)
             val idLookup = selected.associateBy { it.term.lowercase() }
             val wordBriefs = selected.joinToString("\n") { p ->
-                "- ${p.term} (${p.category.name}, ${p.register.label}): ${p.definition.take(80)}"
+                "- ${p.term} (${p.category.name}, ${p.register.label}): ${p.definition}"
             }
             val prompt = """
                 Create ${selected.size} concise TRANSFER LEARNING multiple-choice questions testing ONLY these exact expressions the learner ALREADY studied:
                 $wordBriefs
                 Rules:
+                - STRICT SENSE LOCK: Every dialogue, correct answer, and explanation MUST match the EXACT provided definition above—never a literal meaning or a different dictionary sense of a polysemous word (e.g. if "out of pocket" is defined as rude/inappropriate, do NOT test paying cash; if "flag" is defined as warning of a risk, do NOT test losing energy).
+                - Ensure the 3 wrong options are clearly distinct in meaning (never synonyms of the correct answer).
                 - Place each expression in a BRAND-NEW realistic everyday American conversation (commute, coffee shop, client call, dinner, book club, airport).
                 - Speakers must talk ONLY about the real-life situation—never comment on wording, phrasing, tone, or vocabulary. Good style example:
                   Maya: "Traffic is backed up past the bridge."
@@ -521,7 +523,8 @@ class AiLexiconRepository {
                         category = resolvedCategory,
                         term = matchedEntry?.term ?: term,
                         definition = matchedEntry?.definition ?: q.optString("explanation", ""),
-                        seed = kotlin.math.abs(term.hashCode() + i * 17)
+                        seed = kotlin.math.abs(term.hashCode() + i * 17),
+                        synonyms = matchedEntry?.synonyms?.map { it.term }.orEmpty()
                     )
                     val reply = if (qType == QuizQuestionType.MEANING) scene.replyWithTarget else scene.replyWithBlank
                     "${scene.speakerA}: \"${scene.leadLine}\"\n${scene.speakerB}: \"$reply\""

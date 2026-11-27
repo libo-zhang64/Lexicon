@@ -139,15 +139,42 @@ object CuratedQuizGenerator {
         )
     }
 
+    internal fun selectSafeDistractors(
+        target: PhraseEntry,
+        allPhrases: List<PhraseEntry>,
+        count: Int = 3
+    ): List<PhraseEntry> {
+        val targetNorm = normalizeTerm(target.term)
+        val blockedTerms = buildSet {
+            add(targetNorm)
+            target.synonyms.forEach { add(normalizeTerm(it.term)) }
+        }
+        fun isSafe(candidate: PhraseEntry): Boolean {
+            if (candidate.id == target.id) return false
+            val candNorm = normalizeTerm(candidate.term)
+            if (candNorm in blockedTerms) return false
+            if (candidate.synonyms.any { normalizeTerm(it.term) == targetNorm }) return false
+            if (candidate.definition.trim().equals(target.definition.trim(), ignoreCase = true)) return false
+            return true
+        }
+        val sameCategory = allPhrases.filter { it.category == target.category && isSafe(it) }
+        val pool = if (sameCategory.size >= count) sameCategory else allPhrases.filter(::isSafe)
+        return pool.shuffled().take(count)
+    }
+
+    private fun normalizeTerm(raw: String): String =
+        raw.lowercase(Locale.US)
+            .replace(Regex("\\([^)]*\\)"), "")
+            .replace(Regex("[^a-z0-9]+"), " ")
+            .trim()
+
     private fun buildQuestionForPhrase(
         target: PhraseEntry,
         allPhrases: List<PhraseEntry>,
         type: QuizQuestionType,
         idx: Int
     ): QuizQuestion {
-        val sameCategory = allPhrases.filter { it.id != target.id && it.category == target.category }
-        val distractorPool = if (sameCategory.size >= 3) sameCategory else allPhrases.filter { it.id != target.id }
-        val distractors = distractorPool.shuffled().take(3)
+        val distractors = selectSafeDistractors(target, allPhrases, count = 3)
 
         return when (type) {
             QuizQuestionType.CLOZE -> {
@@ -209,25 +236,186 @@ object CuratedQuizGenerator {
         }
     }
 
-    private fun buildClozeDialogue(entry: PhraseEntry): String {
-        val baseTerm = entry.term
+    private val irregularForms: Map<String, List<String>> = mapOf(
+        "be" to listOf("be", "am", "is", "are", "was", "were", "been", "being"),
+        "bear" to listOf("bear", "bears", "bearing", "bore", "borne"),
+        "beat" to listOf("beat", "beats", "beating", "beaten"),
+        "become" to listOf("become", "becomes", "becoming", "became"),
+        "begin" to listOf("begin", "begins", "beginning", "began", "begun"),
+        "bend" to listOf("bend", "bends", "bending", "bent"),
+        "bet" to listOf("bet", "bets", "betting"),
+        "bite" to listOf("bite", "bites", "biting", "bit", "bitten"),
+        "blow" to listOf("blow", "blows", "blowing", "blew", "blown"),
+        "break" to listOf("break", "breaks", "breaking", "broke", "broken"),
+        "bring" to listOf("bring", "brings", "bringing", "brought"),
+        "build" to listOf("build", "builds", "building", "built"),
+        "burn" to listOf("burn", "burns", "burning", "burned", "burnt"),
+        "buy" to listOf("buy", "buys", "buying", "bought"),
+        "can" to listOf("can", "could"),
+        "catch" to listOf("catch", "catches", "catching", "caught"),
+        "choose" to listOf("choose", "chooses", "choosing", "chose", "chosen"),
+        "come" to listOf("come", "comes", "coming", "came"),
+        "cut" to listOf("cut", "cuts", "cutting"),
+        "deal" to listOf("deal", "deals", "dealing", "dealt"),
+        "dig" to listOf("dig", "digs", "digging", "dug"),
+        "do" to listOf("do", "does", "doing", "did", "done"),
+        "draw" to listOf("draw", "draws", "drawing", "drew", "drawn"),
+        "drink" to listOf("drink", "drinks", "drinking", "drank", "drunk"),
+        "drive" to listOf("drive", "drives", "driving", "drove", "driven"),
+        "eat" to listOf("eat", "eats", "eating", "ate", "eaten"),
+        "fall" to listOf("fall", "falls", "falling", "fell", "fallen"),
+        "feed" to listOf("feed", "feeds", "feeding", "fed"),
+        "feel" to listOf("feel", "feels", "feeling", "felt"),
+        "fight" to listOf("fight", "fights", "fighting", "fought"),
+        "find" to listOf("find", "finds", "finding", "found"),
+        "flee" to listOf("flee", "flees", "fleeing", "fled"),
+        "fly" to listOf("fly", "flies", "flying", "flew", "flown"),
+        "forget" to listOf("forget", "forgets", "forgetting", "forgot", "forgotten"),
+        "freeze" to listOf("freeze", "freezes", "freezing", "froze", "frozen"),
+        "get" to listOf("get", "gets", "getting", "got", "gotten"),
+        "give" to listOf("give", "gives", "giving", "gave", "given"),
+        "go" to listOf("go", "goes", "going", "went", "gone"),
+        "greenlight" to listOf("greenlight", "greenlights", "greenlighting", "greenlit", "greenlighted"),
+        "grow" to listOf("grow", "grows", "growing", "grew", "grown"),
+        "hang" to listOf("hang", "hangs", "hanging", "hung", "hanged"),
+        "have" to listOf("have", "has", "having", "had"),
+        "hear" to listOf("hear", "hears", "hearing", "heard"),
+        "hide" to listOf("hide", "hides", "hiding", "hid", "hidden"),
+        "hit" to listOf("hit", "hits", "hitting"),
+        "hold" to listOf("hold", "holds", "holding", "held"),
+        "keep" to listOf("keep", "keeps", "keeping", "kept"),
+        "know" to listOf("know", "knows", "knowing", "knew", "known"),
+        "lay" to listOf("lay", "lays", "laying", "laid"),
+        "lead" to listOf("lead", "leads", "leading", "led"),
+        "leave" to listOf("leave", "leaves", "leaving", "left"),
+        "lend" to listOf("lend", "lends", "lending", "lent"),
+        "let" to listOf("let", "lets", "letting"),
+        "lie" to listOf("lie", "lies", "lying", "lay", "lain"),
+        "light" to listOf("light", "lights", "lighting", "lit", "lighted"),
+        "lose" to listOf("lose", "loses", "losing", "lost"),
+        "make" to listOf("make", "makes", "making", "made"),
+        "mean" to listOf("mean", "means", "meaning", "meant"),
+        "meet" to listOf("meet", "meets", "meeting", "met"),
+        "pay" to listOf("pay", "pays", "paying", "paid"),
+        "put" to listOf("put", "puts", "putting"),
+        "read" to listOf("read", "reads", "reading"),
+        "retrospective" to listOf("retrospective", "retrospectives", "retro", "retros"),
+        "ride" to listOf("ride", "rides", "riding", "rode", "ridden"),
+        "ring" to listOf("ring", "rings", "ringing", "rang", "rung"),
+        "rise" to listOf("rise", "rises", "rising", "rose", "risen"),
+        "run" to listOf("run", "runs", "running", "ran"),
+        "say" to listOf("say", "says", "saying", "said"),
+        "see" to listOf("see", "sees", "seeing", "saw", "seen"),
+        "seek" to listOf("seek", "seeks", "seeking", "sought"),
+        "sell" to listOf("sell", "sells", "selling", "sold"),
+        "send" to listOf("send", "sends", "sending", "sent"),
+        "set" to listOf("set", "sets", "setting"),
+        "shake" to listOf("shake", "shakes", "shaking", "shook", "shaken"),
+        "shine" to listOf("shine", "shines", "shining", "shone", "shined"),
+        "shoot" to listOf("shoot", "shoots", "shooting", "shot"),
+        "show" to listOf("show", "shows", "showing", "showed", "shown"),
+        "shrink" to listOf("shrink", "shrinks", "shrinking", "shrank", "shrunk"),
+        "shut" to listOf("shut", "shuts", "shutting"),
+        "sing" to listOf("sing", "sings", "singing", "sang", "sung"),
+        "sink" to listOf("sink", "sinks", "sinking", "sank", "sunk"),
+        "sit" to listOf("sit", "sits", "sitting", "sat"),
+        "sleep" to listOf("sleep", "sleeps", "sleeping", "slept"),
+        "slide" to listOf("slide", "slides", "sliding", "slid"),
+        "speak" to listOf("speak", "speaks", "speaking", "spoke", "spoken"),
+        "spend" to listOf("spend", "spends", "spending", "spent"),
+        "spin" to listOf("spin", "spins", "spinning", "spun"),
+        "split" to listOf("split", "splits", "splitting"),
+        "spread" to listOf("spread", "spreads", "spreading"),
+        "spring" to listOf("spring", "springs", "springing", "sprang", "sprung"),
+        "stand" to listOf("stand", "stands", "standing", "stood"),
+        "steal" to listOf("steal", "steals", "stealing", "stole", "stolen"),
+        "stick" to listOf("stick", "sticks", "sticking", "stuck"),
+        "stink" to listOf("stink", "stinks", "stinking", "stank", "stunk"),
+        "strike" to listOf("strike", "strikes", "striking", "struck"),
+        "swear" to listOf("swear", "swears", "swearing", "swore", "sworn"),
+        "sweep" to listOf("sweep", "sweeps", "sweeping", "swept"),
+        "swim" to listOf("swim", "swims", "swimming", "swam", "swum"),
+        "swing" to listOf("swing", "swings", "swinging", "swung"),
+        "take" to listOf("take", "takes", "taking", "took", "taken"),
+        "teach" to listOf("teach", "teaches", "teaching", "taught"),
+        "tear" to listOf("tear", "tears", "tearing", "tore", "torn"),
+        "tell" to listOf("tell", "tells", "telling", "told"),
+        "think" to listOf("think", "thinks", "thinking", "thought"),
+        "throw" to listOf("throw", "throws", "throwing", "threw", "thrown"),
+        "tread" to listOf("tread", "treads", "treading", "trod", "trodden"),
+        "understand" to listOf("understand", "understands", "understanding", "understood"),
+        "wake" to listOf("wake", "wakes", "waking", "woke", "woken"),
+        "wear" to listOf("wear", "wears", "wearing", "wore", "worn"),
+        "weep" to listOf("weep", "weeps", "weeping", "wept"),
+        "win" to listOf("win", "wins", "winning", "won"),
+        "wind" to listOf("wind", "winds", "winding", "wound"),
+        "wring" to listOf("wring", "wrings", "wringing", "wrung"),
+        "write" to listOf("write", "writes", "writing", "wrote", "written")
+    )
+
+    internal fun maskTermInLine(term: String, line: String): String {
+        val baseTerm = term
             .replace(Regex("\\([^)]*\\)"), "")
             .trim()
-        val keywords = baseTerm.split(Regex("\\s+")).filter { it.length >= 3 }
+        if (baseTerm.isBlank()) return line
 
-        val lines = entry.dialogue.map { turn ->
-            var masked = turn.line
-            if (baseTerm.isNotBlank() && masked.contains(baseTerm, ignoreCase = true)) {
-                masked = masked.replace(Regex(Regex.escape(baseTerm), RegexOption.IGNORE_CASE), "________")
-            } else if (keywords.isNotEmpty()) {
-                val regexPattern = keywords.joinToString(".{0,18}") {
-                    Regex.escape(it.take(maxOf(3, it.length - 2))) + "[a-zA-Z'-]*"
-                }
-                val match = Regex(regexPattern, RegexOption.IGNORE_CASE).find(masked)
-                if (match != null) {
-                    masked = masked.replaceRange(match.range, "________")
+        // 1. Direct case-insensitive substring match (handles exact phrases cleanly)
+        val exactRegex = Regex("\\b${Regex.escape(baseTerm)}\\b", RegexOption.IGNORE_CASE)
+        if (exactRegex.containsMatchIn(line)) {
+            return exactRegex.replaceFirst(line, "________")
+        }
+        if (line.contains(baseTerm, ignoreCase = true)) {
+            return line.replaceFirst(Regex(Regex.escape(baseTerm), RegexOption.IGNORE_CASE), "________")
+        }
+
+        // 2. Token-aware inflection & pronoun-placeholder matching
+        val tokens = baseTerm.split(Regex("\\s+")).filter { it.isNotEmpty() }
+        if (tokens.isEmpty()) return line
+
+        fun tokenPattern(token: String): String {
+            val lower = token.lowercase(Locale.US)
+            return when (lower) {
+                "one's", "someone's", "your" -> "(?:my|your|his|her|its|our|their|one's|someone's|[a-z]+['’]s)"
+                "someone" -> "(?:me|you|him|her|us|them|someone|[a-z]+)"
+                "oneself", "yourself" -> "(?:myself|yourself|himself|herself|itself|ourselves|themselves|oneself)"
+                "one" -> "(?:i|you|he|she|we|they|one)"
+                "it" -> "(?:it|that|this|them|things)"
+                else -> {
+                    val forms = irregularForms[lower]
+                    if (forms != null) {
+                        "(?:${forms.joinToString("|") { Regex.escape(it) }})"
+                    } else if (lower.length >= 4) {
+                        val stem = when {
+                            lower.endsWith("e") -> lower.dropLast(1)
+                            lower.endsWith("y") -> lower.dropLast(1)
+                            else -> lower.take(maxOf(3, lower.length - 1))
+                        }
+                        "${Regex.escape(stem)}[a-zA-Z'’-]{0,6}"
+                    } else {
+                        "${Regex.escape(lower)}[a-zA-Z'’-]{0,4}"
+                    }
                 }
             }
+        }
+
+        val fullPattern = tokens.joinToString(".{0,24}") { tokenPattern(it) }
+        val fullRegex = Regex("\\b$fullPattern\\b", RegexOption.IGNORE_CASE)
+        fullRegex.find(line)?.let { match ->
+            return line.replaceRange(match.range, "________")
+        }
+
+        // 3. Single-word or head-token fallback without strict trailing word boundary (for punctuation/hyphens)
+        val relaxedRegex = Regex(fullPattern, RegexOption.IGNORE_CASE)
+        relaxedRegex.find(line)?.let { match ->
+            return line.replaceRange(match.range, "________")
+        }
+
+        return line
+    }
+
+    internal fun buildClozeDialogue(entry: PhraseEntry): String {
+        val lines = entry.dialogue.map { turn ->
+            val masked = maskTermInLine(entry.term, turn.line)
             "${turn.speaker}: \"$masked\""
         }
 
@@ -239,7 +427,8 @@ object CuratedQuizGenerator {
                 category = entry.category,
                 term = entry.term,
                 definition = entry.definition,
-                seed = abs(entry.id.hashCode())
+                seed = abs(entry.id.hashCode()),
+                synonyms = entry.synonyms.map { it.term }
             )
             "${scene.speakerA}: \"${scene.leadLine}\"\n${scene.speakerB}: \"${scene.replyWithBlank}\""
         }

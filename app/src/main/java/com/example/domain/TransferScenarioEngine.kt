@@ -108,9 +108,8 @@ object TransferScenarioEngine {
         seed: Int,
         idx: Int
     ): QuizQuestion {
-        val sameCategory = allPhrases.filter { it.id != target.id && it.category == target.category }
-        val distractorPool = if (sameCategory.size >= 3) sameCategory else allPhrases.filter { it.id != target.id }
-        val distractors = distractorPool.shuffled().take(3)
+        val distractors = CuratedQuizGenerator.selectSafeDistractors(target, allPhrases, count = 3)
+        val synTerms = target.synonyms.map { it.term }
 
         val cleanDef = target.definition.trim().trimEnd('.')
         val defLower = cleanDef.replaceFirstChar { it.lowercase(Locale.US) }
@@ -122,7 +121,8 @@ object TransferScenarioEngine {
                     category = target.category,
                     term = target.term,
                     definition = target.definition,
-                    seed = seed
+                    seed = seed,
+                    synonyms = synTerms
                 )
                 val snippet = "${scene.speakerA}: \"${scene.leadLine}\"\n${scene.speakerB}: \"${scene.replyWithBlank}\""
                 val options = (distractors + target).shuffled()
@@ -148,7 +148,8 @@ object TransferScenarioEngine {
                     category = target.category,
                     term = target.term,
                     definition = target.definition,
-                    seed = seed + 5
+                    seed = seed + 5,
+                    synonyms = synTerms
                 )
                 val snippet = "${scene.speakerA}: \"${scene.leadLine}\"\n${scene.speakerB}: \"${scene.replyWithBlank}\""
                 val options = (distractors + target).shuffled()
@@ -174,7 +175,8 @@ object TransferScenarioEngine {
                     category = target.category,
                     term = target.term,
                     definition = target.definition,
-                    seed = seed + 3
+                    seed = seed + 3,
+                    synonyms = synTerms
                 )
                 val snippet = "${scene.speakerA}: \"${scene.leadLine}\"\n${scene.speakerB}: \"${scene.replyWithTarget}\""
                 val optionDefs = (distractors.map { it.definition } + target.definition).shuffled()

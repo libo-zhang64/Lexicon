@@ -67,7 +67,10 @@ object CuratedCatalog {
             seenTerms.add(normalizeKey(entry.term))
         }
 
-        // 2. Load the 5 category TSV asset files
+        // 2. Load the 5 category TSV asset files in TWO passes:
+        //    Pass 1: ALL bespoke 8-column entries (with hand-written, meaning-accurate examples) first,
+        //            so compact 5-column duplicates in earlier files never shadow richer bespoke entries.
+        //    Pass 2: Remaining 5-column compact entries.
         val assetMap = listOf(
             "catalog/slang.tsv" to PhraseCategory.SLANG,
             "catalog/idioms.tsv" to PhraseCategory.IDIOM,
@@ -76,71 +79,82 @@ object CuratedCatalog {
             "catalog/gre.tsv" to PhraseCategory.GRE_VOCAB
         )
 
-        for ((assetPath, category) in assetMap) {
+        val assetRows: List<Pair<PhraseCategory, List<String>>> = assetMap.map { (assetPath, category) ->
             val lines = runCatching {
                 context.assets.open(assetPath).bufferedReader(Charsets.UTF_8).use { it.readLines() }
             }.getOrDefault(emptyList())
+            category to lines
+        }
 
-            for ((idx, rawLine) in lines.withIndex()) {
-                val line = rawLine.trim()
-                if (line.isEmpty() || line.startsWith("#")) continue
-                val parts = line.split("|")
-                if (parts.size < 5) continue
+        fun ingestPass(bespokeOnly: Boolean) {
+            for ((category, lines) in assetRows) {
+                for ((idx, rawLine) in lines.withIndex()) {
+                    val line = rawLine.trim()
+                    if (line.isEmpty() || line.startsWith("#")) continue
+                    val parts = line.split("|")
+                    if (parts.size < 5) continue
 
-                val term = parts[0].trim()
-                val normalized = normalizeKey(term)
-                if (term.isEmpty() || normalized in excludedTerms || normalized in seenTerms) continue
+                    val isBespoke = parts.size >= 8 && parts[6].trim().isNotBlank()
+                    if (bespokeOnly != isBespoke) continue
 
-                val ipa: String
-                val register: PhraseRegister
-                val cefr: CefrLevel
-                val definition: String
-                val nuance: String
-                val exampleLine: String
-                val synAntRaw: String
-                val hasCustomExample: Boolean
+                    val term = parts[0].trim()
+                    val normalized = normalizeKey(term)
+                    if (term.isEmpty() || normalized in excludedTerms || normalized in seenTerms) continue
 
-                if (parts.size >= 8) {
-                    ipa = parts[1].trim()
-                    register = parseRegister(parts[2].trim())
-                    cefr = CefrLevel.fromRaw(parts[3].trim())
-                    definition = parts[4].trim()
-                    nuance = parts[5].trim()
-                    exampleLine = parts[6].trim()
-                    synAntRaw = parts[7].trim()
-                    hasCustomExample = exampleLine.isNotBlank()
-                } else {
-                    ipa = ""
-                    register = parseRegister(parts[1].trim())
-                    cefr = CefrLevel.fromRaw(parts[2].trim())
-                    definition = parts[3].trim()
-                    synAntRaw = parts[4].trim()
-                    nuance = buildCompactNuance(category, register, definition)
-                    val explicitExample = if (parts.size >= 6) parts[5].trim() else ""
-                    hasCustomExample = explicitExample.isNotBlank()
-                    exampleLine = explicitExample
+                    val ipa: String
+                    val register: PhraseRegister
+                    val cefr: CefrLevel
+                    val definition: String
+                    val nuance: String
+                    val exampleLine: String
+                    val synAntRaw: String
+                    val hasCustomExample: Boolean
+
+                    if (parts.size >= 8) {
+                        ipa = parts[1].trim()
+                        register = parseRegister(parts[2].trim())
+                        cefr = CefrLevel.fromRaw(parts[3].trim())
+                        definition = parts[4].trim()
+                        nuance = parts[5].trim()
+                        exampleLine = parts[6].trim()
+                        synAntRaw = parts[7].trim()
+                        hasCustomExample = exampleLine.isNotBlank()
+                    } else {
+                        ipa = ""
+                        register = parseRegister(parts[1].trim())
+                        cefr = CefrLevel.fromRaw(parts[2].trim())
+                        definition = parts[3].trim()
+                        synAntRaw = parts[4].trim()
+                        nuance = buildCompactNuance(category, register, definition)
+                        val explicitExample = if (parts.size >= 6) parts[5].trim() else ""
+                        hasCustomExample = explicitExample.isNotBlank()
+                        exampleLine = explicitExample
+                    }
+
+                    val id = makeStableId(category, term, idx, seenIds)
+                    seenIds.add(id)
+                    seenTerms.add(normalized)
+
+                    val entry = synthesizePhraseEntry(
+                        id = id,
+                        term = term,
+                        ipa = ipa,
+                        category = category,
+                        register = register,
+                        cefr = cefr,
+                        definition = definition,
+                        nuance = nuance,
+                        exampleLine = exampleLine,
+                        hasCustomExample = hasCustomExample,
+                        synAntRaw = synAntRaw
+                    )
+                    result.add(entry)
                 }
-
-                val id = makeStableId(category, term, idx, seenIds)
-                seenIds.add(id)
-                seenTerms.add(normalized)
-
-                val entry = synthesizePhraseEntry(
-                    id = id,
-                    term = term,
-                    ipa = ipa,
-                    category = category,
-                    register = register,
-                    cefr = cefr,
-                    definition = definition,
-                    nuance = nuance,
-                    exampleLine = exampleLine,
-                    hasCustomExample = hasCustomExample,
-                    synAntRaw = synAntRaw
-                )
-                result.add(entry)
             }
         }
+
+        ingestPass(bespokeOnly = true)
+        ingestPass(bespokeOnly = false)
 
         return result
     }
@@ -181,22 +195,6 @@ object CuratedCatalog {
         hasCustomExample: Boolean,
         synAntRaw: String
     ): PhraseEntry {
-        val hash = abs(term.hashCode())
-        val dialogue = if (hasCustomExample && exampleLine.isNotBlank()) {
-            NaturalDialogueSynthesizer.wrapBespokeExampleInDialogue(
-                category = category,
-                exampleLine = exampleLine,
-                hash = hash
-            )
-        } else {
-            NaturalDialogueSynthesizer.buildNaturalLessonDialogue(
-                category = category,
-                term = term,
-                definition = definition,
-                hash = hash
-            )
-        }
-
         val synAntParts = synAntRaw.split("~")
         val synTerms = synAntParts.getOrNull(0)
             ?.split(",")
@@ -208,6 +206,24 @@ object CuratedCatalog {
             ?.map { it.trim() }
             ?.filter { it.isNotEmpty() }
             .orEmpty()
+
+        val hash = abs(term.hashCode())
+        val dialogue = if (hasCustomExample && exampleLine.isNotBlank()) {
+            NaturalDialogueSynthesizer.wrapBespokeExampleInDialogue(
+                category = category,
+                exampleLine = exampleLine,
+                hash = hash,
+                definition = definition
+            )
+        } else {
+            NaturalDialogueSynthesizer.buildNaturalLessonDialogue(
+                category = category,
+                term = term,
+                definition = definition,
+                hash = hash,
+                synonyms = synTerms
+            )
+        }
 
         val synonyms = synTerms.mapIndexed { idx, s ->
             val contrast = when (idx) {

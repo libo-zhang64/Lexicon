@@ -210,4 +210,146 @@ class DomainUpgradesUnitTest {
             )
         }
     }
+
+    @Test
+    fun bespokeClozeMaskingSucceedsOnFlagshipAndAlmostAll8ColTsvEntries() {
+        // 1. All 40 flagship entries must mask cleanly in their own dialogue
+        val flagshipFailures = mutableListOf<String>()
+        CuratedCatalog.entries.forEach { entry ->
+            val masked = entry.dialogue.any { turn ->
+                com.example.domain.CuratedQuizGenerator.maskTermInLine(entry.term, turn.line).contains("________")
+            }
+            if (!masked) flagshipFailures.add(entry.term)
+        }
+        assertTrue("Flagship entries failed cloze masking: $flagshipFailures", flagshipFailures.isEmpty())
+
+        // 2. Scan all 5 TSV files for 8-column bespoke entries
+        val catalogFiles = listOf("slang.tsv", "idioms.tsv", "phrasal.tsv", "workplace.tsv", "gre.tsv")
+        var totalBespoke = 0
+        var maskedCount = 0
+        val failures = mutableListOf<String>()
+        catalogFiles.forEach { fileName ->
+            val file = java.io.File("src/main/assets/catalog/$fileName")
+            assertTrue("Expected $fileName to exist", file.exists())
+            file.readLines().forEach { raw ->
+                val line = raw.trim()
+                if (line.isEmpty() || line.startsWith("#")) return@forEach
+                val parts = line.split("|")
+                if (parts.size >= 8 && parts[6].trim().isNotBlank()) {
+                    totalBespoke++
+                    val term = parts[0].trim()
+                    val example = parts[6].trim()
+                    val result = com.example.domain.CuratedQuizGenerator.maskTermInLine(term, example)
+                    if (result.contains("________")) {
+                        maskedCount++
+                    } else {
+                        failures.add("$fileName: $term -> $example")
+                    }
+                }
+            }
+        }
+        assertTrue("Expected at least 1,200 bespoke entries, found $totalBespoke", totalBespoke >= 1200)
+        val passRate = maskedCount.toDouble() / totalBespoke.toDouble()
+        assertTrue(
+            "Expected >=98% bespoke cloze masking rate, got ${(passRate * 100).toInt()}% ($maskedCount/$totalBespoke). Sample failures: ${failures.take(10)}",
+            passRate >= 0.98
+        )
+    }
+
+    @Test
+    fun semanticIntentRoutingMatchesExactWordSenseAndPolarity() {
+        val synth = com.example.data.catalog.NaturalDialogueSynthesizer
+        val classifier = com.example.data.catalog.SemanticIntentClassifier
+
+        // Polysemous slang words must get their exact slang grammar & sense
+        assertEquals(
+            com.example.data.catalog.NaturalDialogueSynthesizer.ExpressionGrammar.THING_NOUN,
+            synth.classifyGrammar(PhraseCategory.SLANG, "cap", "Modern slang meaning a lie, exaggeration, or false boast")
+        )
+        assertEquals(
+            com.example.data.catalog.NaturalDialogueSynthesizer.ExpressionGrammar.ADJECTIVE,
+            synth.classifyGrammar(PhraseCategory.SLANG, "fire", "Exceptionally good, stylish, or exciting.")
+        )
+        assertEquals(
+            com.example.data.catalog.NaturalDialogueSynthesizer.ExpressionGrammar.UNCOUNTABLE_NOUN,
+            synth.classifyGrammar(PhraseCategory.SLANG, "tea", "Juicy, piping-hot gossip and behind-the-scenes drama")
+        )
+
+        // Person vs thing noun separation + negative polarity for sycophant
+        assertEquals(
+            com.example.data.catalog.NaturalDialogueSynthesizer.ExpressionGrammar.PERSON_NOUN,
+            synth.classifyGrammar(PhraseCategory.GRE_VOCAB, "sycophant", "A person who acts obsequiously toward someone important in order to gain advantage")
+        )
+        val sycophantDialogue = synth.buildNaturalLessonDialogue(
+            PhraseCategory.GRE_VOCAB,
+            "sycophant",
+            "A person who acts obsequiously toward someone important in order to gain advantage",
+            hash = 123
+        ).joinToString(" ") { it.line }.lowercase()
+        assertFalse("Sycophant should never get a drink/corner place scene", sycophantDialogue.contains("corner place"))
+        assertFalse("Sycophant should never get a toddler praise scene", sycophantDialogue.contains("toddlers"))
+
+        // Out of pocket (slang rude sense) must route to CRITICISM_NEGATIVE, never positive praise
+        assertEquals(
+            com.example.data.catalog.SemanticIntentClassifier.SemanticIntent.CRITICISM_NEGATIVE,
+            classifier.classifySemanticIntent(PhraseCategory.SLANG, "out of pocket", "Acting wildly inappropriate and rude, or temporarily unavailable/paying personally")
+        )
+        val oopScene = synth.buildTransferScene(
+            PhraseCategory.SLANG,
+            "out of pocket",
+            "Acting wildly inappropriate and rude, or temporarily unavailable/paying personally",
+            seed = 7
+        )
+        assertFalse("Rude 'out of pocket' must not get a helpful mechanic scene", oopScene.leadLine.lowercase().contains("mechanic"))
+
+        // Directional & domain precision checks
+        assertEquals(
+            com.example.data.catalog.SemanticIntentClassifier.SemanticIntent.REDUCE_LESSEN,
+            classifier.classifySemanticIntent(PhraseCategory.GRE_VOCAB, "abate", "Become less intense, strong, or widespread")
+        )
+        assertEquals(
+            com.example.data.catalog.SemanticIntentClassifier.SemanticIntent.INCREASE_GROW,
+            classifier.classifySemanticIntent(PhraseCategory.GRE_VOCAB, "exacerbate", "Make a problem, bad situation, or negative feeling worse")
+        )
+        assertEquals(
+            com.example.data.catalog.SemanticIntentClassifier.SemanticIntent.BORING_OVERUSED,
+            classifier.classifySemanticIntent(PhraseCategory.GRE_VOCAB, "hackneyed", "Lacking significance through having been overused; unoriginal and trite")
+        )
+        assertEquals(
+            com.example.data.catalog.SemanticIntentClassifier.SemanticIntent.BRIEF_TEMPORARY,
+            classifier.classifySemanticIntent(PhraseCategory.GRE_VOCAB, "ephemeral", "Lasting for a very short time")
+        )
+        assertEquals(
+            com.example.data.catalog.SemanticIntentClassifier.SemanticIntent.TIME_SCHEDULE,
+            classifier.classifySemanticIntent(PhraseCategory.WORKPLACE, "booked solid", "Having every hour of one's calendar filled")
+        )
+
+        // Cut corners must never get a concert speeding scene
+        val cutCornersDialogue = synth.buildNaturalLessonDialogue(
+            PhraseCategory.SLANG,
+            "cut corners",
+            "To do something hastily, cheaply, or carelessly by skipping important steps to save time or money.",
+            hash = 0
+        ).joinToString(" ") { it.line }.lowercase()
+        assertFalse("cut corners must not get concert traffic scene", cutCornersDialogue.contains("concert"))
+    }
+
+    @Test
+    fun quizDistractorsExcludeTargetSynonyms() {
+        val all = CuratedCatalog.entries
+        val target = all.first { it.id == "table_a_discussion" } // synonym includes "put a pin in it"
+        val syntheticSynonymEntry = target.copy(
+            id = "syn_put_a_pin",
+            term = "put a pin in it",
+            definition = "Pause a side topic temporarily"
+        )
+        val pool = all + syntheticSynonymEntry
+        repeat(20) {
+            val distractors = com.example.domain.CuratedQuizGenerator.selectSafeDistractors(target, pool, count = 3)
+            assertFalse(
+                "Distractors must never contain a synonym of target",
+                distractors.any { it.id == "syn_put_a_pin" }
+            )
+        }
+    }
 }
