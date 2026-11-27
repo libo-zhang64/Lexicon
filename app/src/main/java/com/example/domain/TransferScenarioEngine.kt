@@ -18,15 +18,6 @@ import kotlin.math.abs
  */
 object TransferScenarioEngine {
 
-    private val freshRealWorldRoleplays = listOf(
-        "You're debriefing a colleague after a tense stakeholder review" to "Workplace Debrief",
-        "You're chatting with a close friend while grabbing weekend coffee" to "Weekend Coffee",
-        "You're sending a quick voice note to recap an unexpected plot twist" to "Voice Note Recap",
-        "You're editing an op-ed draft with a senior editor on deadline" to "Newsroom Edit",
-        "You're replying in a group chat about a sudden change of plans" to "Group Chat",
-        "You're answering a tough follow-up question during a live Q&A panel" to "Live Q&A Panel"
-    )
-
     /**
      * Returns expressions the user has already engaged with (completed lesson, quizzed, or saved).
      */
@@ -153,17 +144,13 @@ object TransferScenarioEngine {
             }
 
             QuizQuestionType.REGISTER -> {
-                val (situation, domainName) = freshRealWorldRoleplays[seed % freshRealWorldRoleplays.size]
-                val synHint = target.synonyms.firstOrNull()?.term
-                val snippet = buildString {
-                    append("$situation. ")
-                    append("Goal: convey \"$defLower\" in a $regLower tone")
-                    if (!synHint.isNullOrBlank()) {
-                        append(" (close to \"$synHint\").")
-                    } else {
-                        append(".")
-                    }
-                }
+                val scene = NaturalDialogueSynthesizer.buildTransferScene(
+                    category = target.category,
+                    term = target.term,
+                    definition = target.definition,
+                    seed = seed + 5
+                )
+                val snippet = "${scene.speakerA}: \"${scene.leadLine}\"\n${scene.speakerB}: \"${scene.replyWithBlank}\""
                 val options = (distractors + target).shuffled()
                 val correctIndex = options.indexOfFirst { it.id == target.id }.coerceAtLeast(0)
                 QuizQuestion(
@@ -172,13 +159,13 @@ object TransferScenarioEngine {
                     phraseTerm = target.term,
                     category = target.category,
                     questionType = QuizQuestionType.REGISTER,
-                    prompt = "Which expression you've learned fits this situation best?",
+                    prompt = "Pick the $regLower expression meaning \"$defLower\" that fits ${scene.speakerB}'s reply:",
                     contextSnippet = snippet,
                     options = options.map { it.term },
                     correctIndex = correctIndex,
                     explanation = "\"${target.term}\" fits ${target.register.label} contexts cleanly: $cleanDef.",
                     isTransferQuestion = true,
-                    transferDomainLabel = "New Context • $domainName"
+                    transferDomainLabel = "New Context • ${scene.domainLabel}"
                 )
             }
 

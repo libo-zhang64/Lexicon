@@ -874,7 +874,7 @@ object NaturalDialogueSynthesizer {
                     listOf(
                         Triple(
                             "Did you see how everyone reacted to Maya's talk at the meetup last night?",
-                            "Oh yeah—calling that moment $art $clean isn't even an exaggeration; people were still buzzing in the lobby.",
+                            "Oh yeah—the whole Q&A turned into $art full-blown $clean, and people were still buzzing in the lobby.",
                             "Wish I hadn't missed it! Let me know if they post the recording."
                         ),
                         Triple(
@@ -1201,5 +1201,40 @@ object NaturalDialogueSynthesizer {
             replyWithTarget = replyTpl.replace("%s", formattedTerm),
             replyWithBlank = replyTpl.replace("%s", blank)
         )
+    }
+
+    private val metaLanguagePatterns = listOf(
+        "to sum up that feeling",
+        "to sum up",
+        "i'd call it",
+        "i would call it",
+        "would call it",
+        "calling that",
+        "natural expression",
+        "sounds super natural",
+        "sounds natural",
+        "native speakers",
+        "stiff textbook",
+        "captures that",
+        "captures the",
+        "sums up",
+        "nails that",
+        "nails the",
+        "conveying ",
+        "in one word",
+        "in one phrase",
+        "in a casual tone",
+        "in a formal tone",
+        "in a professional tone",
+        "in a conversational tone",
+        "use ________",
+        "drop in ________",
+        "swap that clunky"
+    )
+
+    fun containsMetaLanguage(text: String?): Boolean {
+        if (text.isNullOrBlank()) return false
+        val lower = text.lowercase(Locale.US)
+        return metaLanguagePatterns.any { lower.contains(it) }
     }
 }

@@ -1,6 +1,7 @@
 package com.example.data.firebase
 
 import android.util.Log
+import com.example.data.catalog.NaturalDialogueSynthesizer
 import com.example.data.model.CategoryFilter
 import com.example.data.model.CefrLevel
 import com.example.data.model.DialogueTurn
@@ -280,7 +281,7 @@ class AiLexiconRepository {
             val prompt = """
                 Lexicon entry for American English expression: "$cleaned".
                 Be crisp and concise (1 short sentence per field).
-                In lineA/lineB, write a genuine everyday US exchange where speakerB uses "$cleaned" organically—never talk about the phrase itself (no "sounds natural", "I'd call it", or quoting it as a vocabulary term).
+                In lineA/lineB, write a real everyday US conversation where speakerB uses "$cleaned" directly in a sentence about work, travel, food, or daily life—without mentioning words, phrases, or language.
             """.trimIndent()
 
             onProgress("Connecting to Gemini 3.8 Flash...", 0)
@@ -303,13 +304,25 @@ class AiLexiconRepository {
 
             val json = JSONObject(rawJson)
             val term = json.optString("term", cleaned).ifBlank { cleaned }
+            val resolvedCategory = PhraseCategory.fromRaw(json.optString("category"))
+            val resolvedDefinition = json.optString("definition", "American English expression.")
             val speakerA = json.optString("speakerA", "Maya").ifBlank { "Maya" }
             val lineA = json.optString("lineA", "").trim()
             val speakerB = json.optString("speakerB", "Jordan").ifBlank { "Jordan" }
             val lineB = json.optString("lineB", "").trim()
-            val dialogue = buildList {
+            val rawDialogue = buildList {
                 if (lineA.isNotEmpty()) add(DialogueTurn(speakerA, lineA))
                 if (lineB.isNotEmpty()) add(DialogueTurn(speakerB, lineB))
+            }
+            val dialogue = if (rawDialogue.isEmpty() || rawDialogue.any { NaturalDialogueSynthesizer.containsMetaLanguage(it.line) }) {
+                NaturalDialogueSynthesizer.buildNaturalLessonDialogue(
+                    category = resolvedCategory,
+                    term = term,
+                    definition = resolvedDefinition,
+                    hash = kotlin.math.abs(term.hashCode())
+                )
+            } else {
+                rawDialogue
             }
 
             val synArr = json.optJSONArray("synonyms")
@@ -444,8 +457,10 @@ class AiLexiconRepository {
                 Create ${selected.size} concise TRANSFER LEARNING multiple-choice questions testing ONLY these exact expressions the learner ALREADY studied:
                 $wordBriefs
                 Rules:
-                - Place each expression in a BRAND-NEW realistic American conversation (podcast, coffee chat, client call, book club, dinner banter, newsroom).
-                - Speakers must use the expression organically in real speech—NEVER talk about the word/phrase itself (no "I'd call it ___", "sounds natural", "captures that", or textbook definitions inside dialogue).
+                - Place each expression in a BRAND-NEW realistic everyday American conversation (commute, coffee shop, client call, dinner, book club, airport).
+                - Speakers must talk ONLY about the real-life situation—never comment on wording, phrasing, tone, or vocabulary. Good style example:
+                  Maya: "Traffic is backed up past the bridge."
+                  Jordan: "Let's grab coffee until the rush starts to ________."
                 - Mix CLOZE (blank out the target word with ________), REGISTER, and MEANING.
                 - Keep dialogue snippets to 2 crisp lines and explanations to 1 concise sentence.
                 - Set phraseTerm to the EXACT target expression from the list above.
@@ -498,16 +513,31 @@ class AiLexiconRepository {
                 val promptText = q.optString("prompt").trim()
                 if (promptText.isEmpty()) continue
                 val matchedEntry = idLookup[term.lowercase()]
+                val resolvedCategory = matchedEntry?.category ?: PhraseCategory.fromRaw(q.optString("category"))
+                val qType = QuizQuestionType.fromRaw(q.optString("questionType"))
+                val rawSnippet = q.optString("contextSnippet").trim().takeIf { it.isNotEmpty() }
+                val cleanSnippet = if (NaturalDialogueSynthesizer.containsMetaLanguage(rawSnippet)) {
+                    val scene = NaturalDialogueSynthesizer.buildTransferScene(
+                        category = resolvedCategory,
+                        term = matchedEntry?.term ?: term,
+                        definition = matchedEntry?.definition ?: q.optString("explanation", ""),
+                        seed = kotlin.math.abs(term.hashCode() + i * 17)
+                    )
+                    val reply = if (qType == QuizQuestionType.MEANING) scene.replyWithTarget else scene.replyWithBlank
+                    "${scene.speakerA}: \"${scene.leadLine}\"\n${scene.speakerB}: \"$reply\""
+                } else {
+                    rawSnippet
+                }
                 val setting = q.optString("settingLabel", "").trim()
                 add(
                     QuizQuestion(
                         id = "ai_q_${i}_${System.currentTimeMillis()}",
                         phraseId = matchedEntry?.id ?: sanitizePhraseId(term),
                         phraseTerm = matchedEntry?.term ?: term,
-                        category = matchedEntry?.category ?: PhraseCategory.fromRaw(q.optString("category")),
-                        questionType = QuizQuestionType.fromRaw(q.optString("questionType")),
+                        category = resolvedCategory,
+                        questionType = qType,
                         prompt = promptText,
-                        contextSnippet = q.optString("contextSnippet").trim().takeIf { it.isNotEmpty() },
+                        contextSnippet = cleanSnippet,
                         options = opts,
                         correctIndex = correctIdx,
                         explanation = q.optString("explanation", "").trim(),
@@ -539,7 +569,7 @@ class AiLexiconRepository {
             val prompt = """
                 Extract 5 to 6 of the strongest B2-C2/GRE words or phrases directly from the text below.
                 Focus: ${focus.promptHint}
-                Rules: Every term MUST appear in the text. Skip basic words. Keep every field crisp and concise (1 short sentence max). Make dialogueA/dialogueB genuine everyday American speech using the term naturally—never talk about the word itself (no "sounds natural", "I'd call it", or quoting the term).
+                Rules: Every term MUST appear in the text. Skip basic words. Keep every field crisp and concise (1 short sentence max). Write dialogueA/dialogueB as real everyday American speech about life or work where dialogueB uses the term directly without discussing language or phrasing.
 
                 TEXT:
                 $cleaned
@@ -583,11 +613,23 @@ class AiLexiconRepository {
                     if (!seen.add(id)) continue
 
                     val (spA, spB) = speakerPairs[i % speakerPairs.size]
+                    val itemCategory = PhraseCategory.fromRaw(obj.optString("category"))
+                    val itemDefinition = obj.optString("definition", "").trim().ifBlank { "High-value English expression." }
                     val lineA = obj.optString("dialogueA", "").trim()
                     val lineB = obj.optString("dialogueB", "").trim()
-                    val dialogue = buildList {
+                    val rawDialogue = buildList {
                         if (lineA.isNotEmpty()) add(DialogueTurn(spA, lineA))
                         if (lineB.isNotEmpty()) add(DialogueTurn(spB, lineB))
+                    }
+                    val dialogue = if (rawDialogue.isEmpty() || rawDialogue.any { NaturalDialogueSynthesizer.containsMetaLanguage(it.line) }) {
+                        NaturalDialogueSynthesizer.buildNaturalLessonDialogue(
+                            category = itemCategory,
+                            term = term,
+                            definition = itemDefinition,
+                            hash = kotlin.math.abs(term.hashCode() + i)
+                        )
+                    } else {
+                        rawDialogue
                     }
 
                     val synonyms = obj.optString("synonymsCsv", "")
